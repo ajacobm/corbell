@@ -194,7 +194,6 @@ Every spec has a `## Reliability and Risk Constraints` section. This is where yo
 ```
 
 `corbell spec review` checks whether the proposed design violates any documented constraint.
-Corbell SaaS populates `incident_derived` constraints automatically from your PagerDuty/incident history.
 
 ### 7. Review, approve, decompose
 
@@ -342,19 +341,6 @@ corbell/
     pip install corbell
     corbell spec lint specs/my-feature.md --ci
 ```
-
----
-
-## Corbell SaaS (coming soon)
-
-The OSS package handles everything locally. The SaaS layer adds:
-
-- **Incident-derived constraints** — auto-populate `constraints.incident_derived` from PagerDuty / incident.io history, so designs can't repeat past production incidents
-- **Team collaboration** — shared knowledge graphs
-- **GitHub integration** — auto-scan on PR merge, spec drift detection
-- **Analytics** — architectural pattern adoption, decision consistency over time
-
-The `incident_derived` block in the spec front-matter is a reserved slot in the OSS schema. The SaaS populates it; the OSS respects it.
 
 ---
 
