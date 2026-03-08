@@ -43,6 +43,16 @@ azure    = ["openai>=1.0"]  # Azure OpenAI uses the openai SDK with AzureOpenAI 
 gcp      = ["google-cloud-aiplatform>=1.38", "anthropic[vertex]>=0.25"]
 notion   = ["notion-client>=2.0"]
 linear   = ["requests>=2.31"]
+# Tree-sitter grammars for accurate multi-language method extraction
+# Install with: pip install "corbell[treesitter]"
+treesitter = [
+  "tree-sitter>=0.21",
+  "tree-sitter-python>=0.21",
+  "tree-sitter-javascript>=0.21",
+  "tree-sitter-typescript>=0.21",
+  "tree-sitter-go>=0.21",
+  "tree-sitter-java>=0.21",
+]
 dev      = [
   "pytest>=8.0",
   "pytest-cov",

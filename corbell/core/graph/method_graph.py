@@ -1,7 +1,17 @@
 """Method-call AST graph builder.
 
-Builds method-level call graphs from source code using AST analysis.
-Extracts function/method nodes from Python (using ast) and JS/Java/Go (using regex).
+Builds method-level call graphs from source code using tree-sitter for accurate
+multi-language parsing. Falls back to Python ``ast`` for Python files when
+tree-sitter is unavailable, and to lightweight regex for other languages.
+
+Supported languages (via tree-sitter):
+    Python, JavaScript, TypeScript, TSX, JSX, Go, Java
+
+Install tree-sitter grammars:
+    pip install "corbell[treesitter]"
+    # or individually:
+    pip install tree-sitter tree-sitter-python tree-sitter-javascript \\
+                tree-sitter-typescript tree-sitter-go tree-sitter-java
 """
 
 from __future__ import annotations
@@ -14,19 +24,133 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from corbell.core.graph.schema import DependencyEdge, GraphStore, MethodNode
 
+# ---------------------------------------------------------------------------
+# Tree-sitter setup (optional dependency)
+# ---------------------------------------------------------------------------
+
+try:
+    import tree_sitter  # noqa: F401
+    from tree_sitter import Language, Parser as TSParser
+    _TS_AVAILABLE = True
+except ImportError:
+    _TS_AVAILABLE = False
+
+# Mapping: our language name -> (tree-sitter module name, language() callable attr)
+_TS_MODULES: Dict[str, str] = {
+    "python":     "tree_sitter_python",
+    "javascript": "tree_sitter_javascript",
+    "typescript": "tree_sitter_typescript",
+    "tsx":        "tree_sitter_typescript",  # same package, different grammar fn
+    "go":         "tree_sitter_go",
+    "java":       "tree_sitter_java",
+}
+
+# Which AST node types to treat as function/method definitions per language
+_TS_TARGET_NODES: Dict[str, Set[str]] = {
+    "python": {
+        "function_definition",
+        "async_function_definition",
+    },
+    "javascript": {
+        "function_declaration",
+        "function_expression",
+        "generator_function_declaration",
+        "arrow_function",
+        "method_definition",
+    },
+    "typescript": {
+        "function_declaration",
+        "function_expression",
+        "generator_function_declaration",
+        "arrow_function",
+        "method_definition",
+        "ambient_declaration",   # declare function ...
+    },
+    "tsx": {
+        "function_declaration",
+        "function_expression",
+        "generator_function_declaration",
+        "arrow_function",
+        "method_definition",
+    },
+    "go": {
+        "function_declaration",
+        "method_declaration",
+    },
+    "java": {
+        "method_declaration",
+        "constructor_declaration",
+    },
+}
+
+# Child field names that hold the identifier for each language's function node
+_TS_NAME_FIELDS: Dict[str, List[str]] = {
+    "python":     ["name"],
+    "javascript": ["name"],
+    "typescript": ["name"],
+    "go":         ["name"],
+    "java":       ["name"],
+}
+
 _SKIP_DIRS = {
     ".git", "__pycache__", "node_modules", "venv", "env", ".venv",
-    ".pytest_cache", "dist", "build", "coverage",
+    ".pytest_cache", "dist", "build", "coverage", ".next", ".nuxt",
+    ".svelte-kit", ".cache", "out", "__tests__", ".turbo", ".vercel",
+    "storybook-static", ".storybook",
 }
 _EXT_LANG = {
-    ".py": "python",
-    ".js": "javascript",
-    ".ts": "typescript",
-    ".tsx": "typescript",
-    ".jsx": "javascript",
-    ".go": "go",
+    ".py":   "python",
+    ".js":   "javascript",
+    ".ts":   "typescript",
+    ".tsx":  "tsx",        # tsx uses a separate tree-sitter grammar (language_tsx)
+    ".jsx":  "javascript",
+    ".go":   "go",
     ".java": "java",
 }
+
+
+# ---------------------------------------------------------------------------
+# Parser cache
+# ---------------------------------------------------------------------------
+
+_parser_cache: Dict[str, Any] = {}  # lang -> TSParser | None
+
+
+def _get_ts_parser(lang: str) -> Optional[Any]:
+    """Return a cached tree-sitter Parser for *lang*, or None if unavailable."""
+    if not _TS_AVAILABLE:
+        return None
+    if lang in _parser_cache:
+        return _parser_cache[lang]
+
+    module_name = _TS_MODULES.get(lang)
+    parser = None
+    if module_name:
+        try:
+            mod = __import__(module_name)
+            # tree_sitter_typescript exposes two grammars:
+            #   language_typescript() for .ts files
+            #   language_tsx()        for .tsx files (JSX-aware)
+            if lang == "tsx" and hasattr(mod, "language_tsx"):
+                lang_obj = Language(mod.language_tsx())
+            elif lang == "typescript" and hasattr(mod, "language_typescript"):
+                lang_obj = Language(mod.language_typescript())
+            elif hasattr(mod, "language"):
+                lang_obj = Language(mod.language())
+            else:
+                raise AttributeError(f"No language() callable in {module_name}")
+            p = TSParser(lang_obj)
+            parser = p
+        except Exception:
+            parser = None
+
+    _parser_cache[lang] = parser
+    return parser
+
+
+# ---------------------------------------------------------------------------
+# Main builder
+# ---------------------------------------------------------------------------
 
 
 class MethodGraphBuilder:
@@ -36,32 +160,40 @@ class MethodGraphBuilder:
         self.store = graph_store
 
     def build_for_service(self, service_id: str, repo_path: Path) -> Dict[str, Any]:
-        """Scan all files in *repo_path* and populate method nodes + call edges.
+        """Scan *repo_path* and populate method nodes + call edges.
+
+        Uses tree-sitter for all supported languages when the grammar packages
+        are installed. Falls back to Python ``ast`` for Python files, and to
+        lightweight regex for JS/TS/Go/Java when tree-sitter is unavailable.
 
         Args:
-            service_id: Identifier for the owning service (e.g. ``checkout-service``).
-            repo_path: Directory of the repository to scan.
+            service_id: Identifier for the owning service.
+            repo_path: Root directory of the repository to scan.
 
         Returns:
-            Summary with ``methods`` and ``calls`` counts.
+            Summary dict with ``methods``, ``calls``, ``files_scanned``, ``ts_available``.
         """
         all_methods: Dict[str, Dict] = {}
         all_calls: List[Dict] = []
+        files_scanned = 0
 
         for fp in Path(repo_path).rglob("*"):
             if not fp.is_file():
                 continue
-            if any(part in _SKIP_DIRS for part in fp.parts):
+            # Only skip if the immediate parent directory name is in SKIP_DIRS
+            # (avoids false-positives from matching path segments like 'corbel')
+            if any(part in _SKIP_DIRS for part in fp.relative_to(repo_path).parts):
                 continue
             lang = _EXT_LANG.get(fp.suffix)
             if not lang:
                 continue
+            files_scanned += 1
             result = self._analyze_file(fp, service_id, lang)
             for m in result["methods"]:
                 all_methods[m["id"]] = m
             all_calls.extend(result["calls"])
 
-        # Upsert method nodes
+        # Persist method nodes
         for method_id, info in all_methods.items():
             node = MethodNode(
                 id=method_id,
@@ -77,7 +209,7 @@ class MethodGraphBuilder:
             )
             self.store.upsert_node(node)
 
-        # Build call graph edges
+        # Build and persist call graph edges
         call_graph = self._build_call_graph(all_methods, all_calls)
         for caller_id, callee_id, meta in call_graph:
             self.store.upsert_edge(
@@ -89,10 +221,16 @@ class MethodGraphBuilder:
                 )
             )
 
-        return {"methods": len(all_methods), "calls": len(call_graph)}
+        return {
+            "methods": len(all_methods),
+            "calls": len(call_graph),
+            "files_scanned": files_scanned,
+            "ts_available": _TS_AVAILABLE,
+        }
+
 
     # ------------------------------------------------------------------ #
-    # Per-language analyzers                                               #
+    # Dispatch                                                             #
     # ------------------------------------------------------------------ #
 
     def _analyze_file(self, fp: Path, service_id: str, lang: str) -> Dict:
@@ -101,21 +239,148 @@ class MethodGraphBuilder:
         except Exception:
             return {"methods": [], "calls": []}
 
+        # 1. Try tree-sitter
+        parser = _get_ts_parser(lang)
+        if parser is not None:
+            return self._analyze_with_tree_sitter(fp, content, service_id, lang, parser)
+
+        # 2. Python-specific fallback: stdlib ast (accurate)
         if lang == "python":
-            return self._analyze_python(fp, content, service_id)
-        if lang in ("javascript", "typescript"):
-            return self._analyze_js(fp, content, service_id)
-        if lang == "go":
-            return self._analyze_go(fp, content, service_id)
-        if lang == "java":
-            return self._analyze_java(fp, content, service_id)
-        return {"methods": [], "calls": []}
+            return self._analyze_python_ast(fp, content, service_id)
+
+        # 3. Last resort: regex (JS/TS/Go/Java when tree-sitter is absent)
+        return self._analyze_regex_fallback(fp, content, service_id, lang)
 
     def _make_method_id(self, service_id: str, fp: Path, full_name: str) -> str:
         return f"{service_id}::{fp.name}::{full_name}"
 
-    def _analyze_python(self, fp: Path, content: str, service_id: str) -> Dict:
-        """Use Python's ast module for accurate extraction."""
+    # ------------------------------------------------------------------ #
+    # Tree-sitter analyzer (all languages)                                 #
+    # ------------------------------------------------------------------ #
+
+    def _analyze_with_tree_sitter(
+        self,
+        fp: Path,
+        content: str,
+        service_id: str,
+        lang: str,
+        parser: Any,
+    ) -> Dict:
+        """Parse *content* with tree-sitter and extract method nodes."""
+        methods: List[Dict] = []
+        calls: List[Dict] = []
+
+        try:
+            tree = parser.parse(bytes(content, "utf-8"))
+        except Exception:
+            return {"methods": [], "calls": []}
+
+        target_node_types = _TS_TARGET_NODES.get(lang, set())
+        lines = content.splitlines()
+
+        # Walk current class context for Python / Java / TS
+        class_stack: List[str] = []
+
+        def _node_name(node) -> Optional[str]:
+            """Extract the identifier name from a function/method node."""
+            # Most grammars put the name in a child with field 'name'
+            for child in node.children:
+                if child.type == "identifier" and child == node.child_by_field_name("name"):
+                    return child.text.decode("utf-8", errors="ignore")
+            # Fallback: first identifier child
+            for child in node.children:
+                if child.type == "identifier":
+                    return child.text.decode("utf-8", errors="ignore")
+            return None
+
+        def _receiver_or_class(node) -> Optional[str]:
+            """For Go method_declaration, extract the receiver type name."""
+            # child_by_field_name("receiver") -> parameter_list -> ... type
+            recv = node.child_by_field_name("receiver")
+            if recv:
+                for sub in recv.children:
+                    if sub.type in ("type_identifier", "pointer_type", "qualified_type"):
+                        return sub.text.decode("utf-8", errors="ignore").lstrip("*")
+            return None
+
+        def traverse(node, enclosing_class: Optional[str] = None, parent=None):
+            # Track class/struct/interface context
+            if node.type in {"class_declaration", "class_definition",
+                              "struct_type", "type_declaration",
+                              "interface_declaration"}:
+                name_child = node.child_by_field_name("name")
+                cls_name = (
+                    name_child.text.decode("utf-8", errors="ignore")
+                    if name_child else None
+                )
+                for child in node.children:
+                    traverse(child, enclosing_class=cls_name or enclosing_class, parent=node)
+                return
+
+            if node.type in target_node_types:
+                raw_name = _node_name(node)
+
+                # For Go method_declaration, use receiver type as class
+                if lang == "go" and node.type == "method_declaration":
+                    enclosing_class = _receiver_or_class(node) or enclosing_class
+
+                # Arrow functions and function expressions don't have a name
+                # themselves — get it from the parent variable_declarator
+                if raw_name is None and node.type in {
+                    "arrow_function", "function_expression", "generator_function",
+                }:
+                    if parent and parent.type == "variable_declarator":
+                        name_child = parent.child_by_field_name("name")
+                        if name_child:
+                            raw_name = name_child.text.decode("utf-8", errors="ignore")
+
+                if raw_name:
+                    full = (
+                        f"{enclosing_class}.{raw_name}"
+                        if enclosing_class else raw_name
+                    )
+                    mid = self._make_method_id(service_id, fp, full)
+                    line_start = node.start_point[0] + 1
+                    line_end = node.end_point[0] + 1
+
+                    # Attempt docstring for Python
+                    docstring: Optional[str] = None
+                    if lang == "python" and node.children:
+                        body = node.child_by_field_name("body")
+                        if body and body.children:
+                            first = body.children[0]
+                            if first.type == "expression_statement":
+                                ds_node = first.children[0] if first.children else None
+                                if ds_node and ds_node.type == "string":
+                                    docstring = ds_node.text.decode(
+                                        "utf-8", errors="ignore"
+                                    ).strip("\"'")
+
+                    methods.append({
+                        "id": mid,
+                        "name": raw_name,
+                        "full_name": full,
+                        "class_name": enclosing_class,
+                        "file_path": str(fp),
+                        "line_number": line_start,
+                        "line_end": line_end,
+                        "signature": raw_name,
+                        "docstring": docstring,
+                        "service_id": service_id,
+                    })
+
+            for child in node.children:
+                traverse(child, enclosing_class=enclosing_class, parent=node)
+
+        traverse(tree.root_node)
+        return {"methods": methods, "calls": calls}
+
+    # ------------------------------------------------------------------ #
+    # Python ast fallback                                                  #
+    # ------------------------------------------------------------------ #
+
+    def _analyze_python_ast(self, fp: Path, content: str, service_id: str) -> Dict:
+        """Use Python's stdlib ast for accurate extraction when tree-sitter is absent."""
         methods: List[Dict] = []
         calls: List[Dict] = []
 
@@ -123,8 +388,6 @@ class MethodGraphBuilder:
             tree = ast.parse(content, filename=str(fp))
         except SyntaxError:
             return {"methods": [], "calls": []}
-
-        lines = content.splitlines()
 
         class _Visitor(ast.NodeVisitor):
             def __init__(self_inner):
@@ -139,39 +402,33 @@ class MethodGraphBuilder:
 
             def _visit_func(self_inner, node):
                 mname = node.name
-                full = f"{self_inner.current_class}.{mname}" if self_inner.current_class else mname
+                full = (
+                    f"{self_inner.current_class}.{mname}"
+                    if self_inner.current_class else mname
+                )
                 mid = self._make_method_id(service_id, fp, full)
 
-                # Build signature line
                 sig_parts = [a.arg for a in node.args.args]
                 sig = f"def {mname}({', '.join(sig_parts)})"
-
                 docstring = ast.get_docstring(node)
 
-                # Line end: last node in body
-                if node.body:
-                    line_end = max(
-                        getattr(n, "end_lineno", node.end_lineno or node.lineno)
-                        for n in ast.walk(node)
-                    )
-                else:
-                    line_end = node.lineno
-
-                methods.append(
-                    {
-                        "id": mid,
-                        "name": mname,
-                        "full_name": full,
-                        "class_name": self_inner.current_class,
-                        "file_path": str(fp),
-                        "line_number": node.lineno,
-                        "line_end": line_end,
-                        "is_async": isinstance(node, ast.AsyncFunctionDef),
-                        "signature": sig,
-                        "docstring": docstring,
-                        "service_id": service_id,
-                    }
+                line_end = max(
+                    (getattr(n, "end_lineno", node.lineno) for n in ast.walk(node)),
+                    default=node.lineno,
                 )
+                methods.append({
+                    "id": mid,
+                    "name": mname,
+                    "full_name": full,
+                    "class_name": self_inner.current_class,
+                    "file_path": str(fp),
+                    "line_number": node.lineno,
+                    "line_end": line_end,
+                    "is_async": isinstance(node, ast.AsyncFunctionDef),
+                    "signature": sig,
+                    "docstring": docstring,
+                    "service_id": service_id,
+                })
 
                 old_mid = self_inner.current_method_id
                 self_inner.current_method_id = mid
@@ -185,120 +442,118 @@ class MethodGraphBuilder:
                 if not self_inner.current_method_id:
                     self_inner.generic_visit(node)
                     return
+                callee: Optional[str] = None
                 if isinstance(node.func, ast.Name):
                     callee = node.func.id
                 elif isinstance(node.func, ast.Attribute):
                     callee = node.func.attr
-                else:
-                    self_inner.generic_visit(node)
-                    return
-                calls.append(
-                    {
+                if callee:
+                    calls.append({
                         "caller_id": self_inner.current_method_id,
                         "callee_name": callee,
                         "line_number": node.lineno,
-                    }
-                )
+                    })
                 self_inner.generic_visit(node)
 
         _Visitor().visit(tree)
         return {"methods": methods, "calls": calls}
 
-    def _analyze_js(self, fp: Path, content: str, service_id: str) -> Dict:
+    # ------------------------------------------------------------------ #
+    # Regex fallback (JS/TS/Go/Java when tree-sitter absent)               #
+    # ------------------------------------------------------------------ #
+
+    def _analyze_regex_fallback(
+        self, fp: Path, content: str, service_id: str, lang: str
+    ) -> Dict:
+        """Minimal regex extraction used only when tree-sitter grammars are missing."""
+        if lang in ("javascript", "typescript", "tsx"):
+            return self._regex_js(fp, content, service_id)
+        if lang == "go":
+            return self._regex_go(fp, content, service_id)
+        if lang == "java":
+            return self._regex_java(fp, content, service_id)
+        return {"methods": [], "calls": []}
+
+    # --- JS/TS regex (used only as last-resort fallback) ---
+
+    def _regex_js(self, fp: Path, content: str, service_id: str) -> Dict:
         methods: List[Dict] = []
-        calls: List[Dict] = []
         lines = content.splitlines()
-        current_class = None
-
-        func_pats = [
-            re.compile(r"function\s+(\w+)\s*\("),
-            re.compile(r"const\s+(\w+)\s*=\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>)"),
-            re.compile(r"(?:async\s+)?(\w+)\s*\([^)]*\)\s*\{"),
+        current_class: Optional[str] = None
+        KEYWORDS = {
+            "if", "else", "for", "while", "switch", "catch", "try", "return",
+            "new", "typeof", "instanceof", "import", "export", "from", "class",
+            "extends", "implements", "interface", "type", "enum", "declare",
+            "public", "private", "protected", "static", "async", "await",
+        }
+        PATTERNS: List[Tuple[re.Pattern, str]] = [
+            (re.compile(r"^\s*export\s+default\s+(?:async\s+)?function\s*([\w$]*)\s*[<(]"), "default_fn"),
+            (re.compile(r"^\s*export\s+(?:async\s+)?function\s+([\w$]+)\s*[<(]"), "exported_fn"),
+            (re.compile(r"^\s*(?:export\s+)?async\s+function\s+([\w$]+)\s*[<(]"), "async_fn"),
+            (re.compile(r"^\s*(?:export\s+)?function\s+([\w$]+)\s*[<(]"), "fn"),
+            (re.compile(r"^\s*export\s+(?:const|let|var)\s+([\w$]+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[\w$]+)\s*(?::[^=]+)?=>"), "exported_arrow"),
+            (re.compile(r"^\s*(?:const|let|var)\s+([\w$]+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[\w$]+)\s*(?::[^=>]+)?=>"), "arrow"),
+            (re.compile(r"^\s*(?:(?:public|private|protected|static|abstract|override|async|readonly)\s+)*"
+                        r"([\w$]+)\s*[<(][^)]*\)\s*(?::[^{]+)?\s*\{"), "class_method"),
         ]
-        class_pat = re.compile(r"class\s+(\w+)")
-
+        class_pat = re.compile(r"^\s*(?:export\s+)?(?:abstract\s+)?class\s+([\w$]+)")
         for lnum, line in enumerate(lines, 1):
-            cm = class_pat.search(line)
+            cm = class_pat.match(line)
             if cm:
                 current_class = cm.group(1)
-                continue
-            for pat in func_pats:
-                m = pat.search(line)
-                if m:
-                    mname = m.group(1)
-                    if mname in ("if", "for", "while", "return", "switch"):
-                        continue
-                    full = f"{current_class}.{mname}" if current_class else mname
-                    mid = self._make_method_id(service_id, fp, full)
-                    methods.append(
-                        {
-                            "id": mid,
-                            "name": mname,
-                            "full_name": full,
-                            "class_name": current_class,
-                            "file_path": str(fp),
-                            "line_number": lnum,
-                            "line_end": lnum,
-                            "signature": mname,
-                            "docstring": None,
-                            "service_id": service_id,
-                        }
-                    )
-                    break
+            for pat, kind in PATTERNS:
+                m = pat.match(line)
+                if not m:
+                    continue
+                raw = m.group(1) if m.lastindex and m.group(1) else None
+                if raw is None:
+                    raw = fp.stem if kind == "default_fn" else None
+                if not raw or raw in KEYWORDS:
+                    continue
+                full = f"{current_class}.{raw}" if (current_class and kind == "class_method") else raw
+                mid = self._make_method_id(service_id, fp, full)
+                methods.append({
+                    "id": mid, "name": raw, "full_name": full,
+                    "class_name": current_class if kind == "class_method" else None,
+                    "file_path": str(fp), "line_number": lnum, "line_end": lnum,
+                    "signature": raw, "docstring": None, "service_id": service_id,
+                })
+                break
+        return {"methods": methods, "calls": []}
 
-        return {"methods": methods, "calls": calls}
-
-    def _analyze_go(self, fp: Path, content: str, service_id: str) -> Dict:
+    def _regex_go(self, fp: Path, content: str, service_id: str) -> Dict:
         methods: List[Dict] = []
-        lines = content.splitlines()
         pat = re.compile(r"^func\s+(?:\([^)]+\)\s+)?(\w+)\s*\(")
-        for lnum, line in enumerate(lines, 1):
+        for lnum, line in enumerate(content.splitlines(), 1):
             m = pat.match(line)
             if m:
                 mname = m.group(1)
                 mid = self._make_method_id(service_id, fp, mname)
-                methods.append(
-                    {
-                        "id": mid,
-                        "name": mname,
-                        "full_name": mname,
-                        "class_name": None,
-                        "file_path": str(fp),
-                        "line_number": lnum,
-                        "line_end": lnum,
-                        "signature": mname,
-                        "docstring": None,
-                        "service_id": service_id,
-                    }
-                )
+                methods.append({
+                    "id": mid, "name": mname, "full_name": mname,
+                    "class_name": None, "file_path": str(fp),
+                    "line_number": lnum, "line_end": lnum,
+                    "signature": mname, "docstring": None, "service_id": service_id,
+                })
         return {"methods": methods, "calls": []}
 
-    def _analyze_java(self, fp: Path, content: str, service_id: str) -> Dict:
+    def _regex_java(self, fp: Path, content: str, service_id: str) -> Dict:
         methods: List[Dict] = []
-        lines = content.splitlines()
         pat = re.compile(
             r"(?:public|private|protected|static|\s)+[\w<>\[\]]+\s+(\w+)\s*\([^)]*\)\s*\{?"
         )
         skip = {"if", "for", "while", "switch", "catch", "class"}
-        for lnum, line in enumerate(lines, 1):
+        for lnum, line in enumerate(content.splitlines(), 1):
             m = pat.search(line)
             if m and m.group(1) not in skip and "class " not in line:
                 mname = m.group(1)
                 mid = self._make_method_id(service_id, fp, mname)
-                methods.append(
-                    {
-                        "id": mid,
-                        "name": mname,
-                        "full_name": mname,
-                        "class_name": None,
-                        "file_path": str(fp),
-                        "line_number": lnum,
-                        "line_end": lnum,
-                        "signature": mname,
-                        "docstring": None,
-                        "service_id": service_id,
-                    }
-                )
+                methods.append({
+                    "id": mid, "name": mname, "full_name": mname,
+                    "class_name": None, "file_path": str(fp),
+                    "line_number": lnum, "line_end": lnum,
+                    "signature": mname, "docstring": None, "service_id": service_id,
+                })
         return {"methods": methods, "calls": []}
 
     # ------------------------------------------------------------------ #
@@ -308,7 +563,7 @@ class MethodGraphBuilder:
     def _build_call_graph(
         self, all_methods: Dict[str, Dict], all_calls: List[Dict]
     ) -> List[Tuple[str, str, Dict]]:
-        """Match call names to method IDs and return (caller, callee, meta) triples."""
+        """Match call names to method IDs → (caller, callee, meta) triples."""
         name_to_ids: Dict[str, Set[str]] = defaultdict(set)
         for mid, info in all_methods.items():
             name_to_ids[info["name"]].add(mid)

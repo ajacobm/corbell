@@ -180,13 +180,18 @@ class ServiceGraphBuilder:
             self._detect_http_calls(svc, all_service_ids)
 
         # Phase 4: method-level graph
+        service_diagnostics: Dict[str, Any] = {}
         if method_level:
             from corbell.core.graph.method_graph import MethodGraphBuilder
             mgb = MethodGraphBuilder(self.store)
             for svc in discovered:
-                mgb.build_for_service(svc["id"], svc["repo_path"])
+                result = mgb.build_for_service(svc["id"], svc["repo_path"])
+                service_diagnostics[svc["id"]] = result
 
-        return self.store.get_all_nodes_summary()
+        summary = self.store.get_all_nodes_summary()
+        if service_diagnostics:
+            summary["service_diagnostics"] = service_diagnostics
+        return summary
 
     # ------------------------------------------------------------------ #
     # Internal scanning helpers                                            #

@@ -62,7 +62,58 @@ def graph_build(
         console.print(f"  {exists} [bold]{s.id}[/bold]  →  {path}")
 
     summary = builder.build_from_workspace(svcs, clear_existing=rebuild, method_level=method_level)
-    console.print(f"\n[green]✓ Graph built:[/green] {summary}")
+
+    # Show per-type counts
+    nodes = summary.get("nodes", {})
+    console.print()
+    console.print(f"[green]✓ Graph built:[/green]")
+    console.print(f"  Services  : {nodes.get('service', 0)}")
+    console.print(f"  Datastores: {nodes.get('datastore', 0)}")
+    console.print(f"  Queues    : {nodes.get('queue', 0)}")
+    console.print(f"  Methods   : {nodes.get('method', 0)}")
+    console.print(f"  Edges     : {summary.get('edges', 0)}")
+    if method_level and nodes.get('method', 0) == 0:
+        ts_info = [v for v in summary.get("service_diagnostics", {}).values()]
+        ts_available = ts_info[0].get("ts_available", False) if ts_info else False
+        files_total = sum(v.get("files_scanned", 0) for v in ts_info)
+        console.print(
+            f"\n[yellow]⚠ No methods were extracted.[/yellow]\n"
+            f"  Files scanned  : {files_total}\n"
+            f"  Tree-sitter    : {'✓ available' if ts_available else '✗ not installed'}\n"
+            f"  Common causes:\n"
+            "  • tree-sitter grammars not installed → run: pip install \"corbell[treesitter]\"\n"
+            "  • Source files in build output dir (.next, dist, node_modules)\n"
+            "  • Repo path doesn't exist or is wrong\n"
+            "  Run [cyan]corbell graph debug[/cyan] to inspect the DB."
+        )
+
+
+@app.command("debug")
+def graph_debug(
+    workspace: Optional[Path] = typer.Option(None, "--workspace", "-w"),
+):
+    """Show DB location and what's stored — useful for troubleshooting graph build."""
+    cfg, config_dir = _load(workspace)
+    store = _get_store(cfg, config_dir)
+    db = cfg.db_path(config_dir)
+
+    console.print(f"[bold]DB location:[/bold] {db}")
+    console.print(f"[bold]Workspace config_dir:[/bold] {config_dir}")
+
+    summary = store.get_all_nodes_summary()
+    nodes = summary.get("nodes", {})
+    console.print(f"\n[bold]Node counts:[/bold]")
+    for ntype, count in sorted(nodes.items()):
+        console.print(f"  {ntype:12s}: {count}")
+    console.print(f"  {'edges':12s}: {summary.get('edges', 0)}")
+
+    svcs = store.get_all_services()
+    if svcs:
+        console.print(f"\n[bold]Registered services:[/bold]")
+        for s in svcs:
+            console.print(f"  [cyan]{s.id}[/cyan]  lang={s.language}  {s.repo}")
+    else:
+        console.print("\n[yellow]No services found — run `corbell graph build` first.[/yellow]")
 
 
 @app.command("services")
