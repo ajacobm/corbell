@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 
 _MODEL_PRICING: Dict[str, Dict[str, float]] = {
     # Anthropic
-    "claude-3-5-sonnet-20241022": {"input": 0.003, "output": 0.015},
+    "claude-sonnet-4-5-20250929": {"input": 0.003, "output": 0.015},
     "claude-3-5-haiku-20241022":  {"input": 0.0008, "output": 0.004},
     "claude-3-haiku-20240307":    {"input": 0.00025, "output": 0.00125},
     "claude-3-opus-20240229":     {"input": 0.015, "output": 0.075},
@@ -75,8 +75,8 @@ class TokenUsageTracker:
     Usage:
         tracker = TokenUsageTracker()
         # passed into LLMClient; automatically records each call
-        tracker.record("spec_generation", "claude-3-5-sonnet-20241022", 4000, 3200)
-        tracker.record("keyword_extraction", "claude-3-5-sonnet-20241022", 300, 100)
+        tracker.record("spec_generation", "claude-sonnet-4-5-20250929", 4000, 3200)
+        tracker.record("keyword_extraction", "claude-sonnet-4-5-20250929", 300, 100)
         tracker.print_summary()
     """
 

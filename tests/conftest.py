@@ -104,7 +104,7 @@ spec:
 
 llm:
   provider: anthropic
-  model: claude-3-5-sonnet-20241022
+  model: claude-sonnet-4-5-20250929
 """
     ws_file = ws_dir / "workspace.yaml"
     ws_file.write_text(yaml_content)

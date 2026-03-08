@@ -557,7 +557,38 @@ class SpecGenerator:
         return "\n\n".join(context_parts), file_list
 
     def _query_code_chunks(self, prd: str, services: List[str], max_chunks: int) -> list:
-        """Use PRDProcessor queries for smarter code retrieval."""
+        """Query code chunks using PRDProcessor queries with .md retry logic.
+
+        Steps:
+        1. Generate 3-4 natural-language search queries from PRD
+        2. For each query, search the embedding store
+        3. If >60% results are .md files, retry with code-specific suffix
+        4. Merge: code chunks first, .md chunks as supplemental fallback only
+        5. Filter out test/logging files
+        6. Deduplicate by file path, cap to max_chunks
+        """
+        # Suffixes appended on retry when results are dominated by .md files
+        _CODE_SUFFIXES = [
+            " implementation source code",
+            " function class module",
+        ]
+        # Path fragments to skip (test files, logging config)
+        _SKIP_FRAGMENTS = (
+            "/tests/", "/test_", "_test.", "test_",
+            "logging_config", "log_config", "/fixtures/",
+        )
+
+        def _is_md(rec) -> bool:
+            return getattr(rec, "language", "") == "markdown" or rec.file_path.lower().endswith(".md")
+
+        def _mostly_md(recs, threshold=0.6) -> bool:
+            if not recs:
+                return False
+            return sum(1 for r in recs if _is_md(r)) / len(recs) >= threshold
+
+        def _should_skip(rec) -> bool:
+            return any(frag in rec.file_path for frag in _SKIP_FRAGMENTS)
+
         try:
             from corbell.core.embeddings.model import SentenceTransformerModel
             from corbell.core.prd_processor import PRDProcessor
@@ -567,27 +598,67 @@ class SpecGenerator:
 
             model = SentenceTransformerModel()
             seen_ids: set = set()
-            results = []
+            all_code_chunks: list = []
+            all_md_chunks: list = []
 
-            for query in queries:
-                qvec = model.encode([query])[0]
-                hits = self.embeddings.query(
-                    qvec,
-                    service_ids=services or None,
-                    top_k=max(5, max_chunks // len(queries)),
-                )
-                for r in hits:
-                    if r.id not in seen_ids:
-                        seen_ids.add(r.id)
-                        results.append(r)
+            per_query_k = max(5, max_chunks // max(len(queries), 1) + 2)
 
-            # De-prioritize markdown files if we have code chunks
-            code_chunks = [r for r in results if r.language != "markdown"]
-            md_chunks = [r for r in results if r.language == "markdown"]
-            ordered = code_chunks + md_chunks
-            return ordered[:max_chunks]
+            for i, query in enumerate(queries):
+                query_code: list = []
+                query_md: list = []
 
-        except Exception:
+                for attempt in range(3):  # 0 = original, 1 = retry 1, 2 = retry 2
+                    current_q = query if attempt == 0 else query + _CODE_SUFFIXES[attempt - 1]
+                    qvec = model.encode([current_q])[0]
+                    hits = self.embeddings.query(
+                        qvec,
+                        service_ids=services or None,
+                        top_k=per_query_k,
+                    )
+
+                    # Partition into code vs .md
+                    for r in hits:
+                        if r.id in seen_ids or _should_skip(r):
+                            continue
+                        if _is_md(r):
+                            query_md.append(r)
+                        else:
+                            query_code.append(r)
+
+                    if query_code:
+                        break  # Got real code chunks, no need to retry
+
+                    if attempt < 2:
+                        print(
+                            f"   Query {i+1}: results mostly .md, retrying with code suffix"
+                            f" (attempt {attempt + 1}/2)…"
+                        )
+
+                # Mark seen
+                for r in query_code + query_md:
+                    seen_ids.add(r.id)
+
+                all_code_chunks.extend(query_code)
+                if not query_code:
+                    # Only use .md chunks as supplemental when no code found
+                    all_md_chunks.extend(query_md)
+
+            # Code-first ordering, .md chunks appended only as fallback
+            combined = all_code_chunks + all_md_chunks
+
+            # Deduplicate by file path (keep highest-ranked per file)
+            seen_files: dict = {}
+            deduped: list = []
+            for r in combined:
+                fkey = f"{r.service_id}:{r.file_path}"
+                if fkey not in seen_files:
+                    seen_files[fkey] = True
+                    deduped.append(r)
+
+            return deduped[:max_chunks]
+
+        except Exception as e:
+            print(f"⚠️  Code chunk query failed: {e}")
             return []
 
     def _get_existing_codebase_chunks(self, services: List[str], max_chunks: int) -> list:

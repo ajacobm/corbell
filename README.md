@@ -99,7 +99,7 @@ services:
 
 llm:
   provider: anthropic   # or: openai, ollama
-  model: claude-3-5-sonnet-20241022
+  model: claude-sonnet-4-5-20250929
   api_key: ${ANTHROPIC_API_KEY}
 ```
 
@@ -144,8 +144,8 @@ corbell spec new \
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━┓
 ┃ Step                    ┃ Model                    ┃ Input  ┃ Output  ┃ Total  ┃ Est. Cost   ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━┩
-│ search_query_generation │ claude-3-5-sonnet...     │    487 │     124 │    611 │ $0.00311    │
-│ spec_generation         │ claude-3-5-sonnet...     │  5,243 │   3,812 │  9,055 │ $0.07292    │
+│ search_query_generation │ claude-sonnet-4-5        │    487 │     124 │    611 │ $0.00311    │
+│ spec_generation         │ claude-sonnet-4-5        │  5,243 │   3,812 │  9,055 │ $0.07292    │
 ├─────────────────────────┼──────────────────────────┼────────┼─────────┼────────┼─────────────┤
 │ TOTAL                   │ 2 call(s)                │  5,730 │   3,936 │  9,666 │ $0.07603    │
 └─────────────────────────┴──────────────────────────┴────────┴─────────┴────────┴─────────────┘
@@ -284,9 +284,12 @@ corbell spec context "Add exponential backoff retry to payment processing"
 
 | Provider    | Models                                           | Key env var         |
 |-------------|--------------------------------------------------|---------------------|
-| `anthropic` | `claude-3-5-sonnet-20241022`, `claude-3-haiku-*` | `ANTHROPIC_API_KEY` |
+| `anthropic` | `claude-sonnet-4-5`, `claude-haiku-4-5`, `claude-3-5-haiku-*` | `ANTHROPIC_API_KEY` |
 | `openai`    | `gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo`          | `OPENAI_API_KEY`    |
 | `ollama`    | `llama3`, `mistral`, any local model             | (no key required)   |
+| `aws`       | `us.anthropic.claude-sonnet-4-20250514-v1:0`     | `BEDROCK_API_KEY` (long-term key from Bedrock console) or IAM credentials |
+| `azure`     | `gpt-4o`, any Azure deployment                   | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT` |
+| `gcp`       | `claude-sonnet-4-5@20250514`                     | `gcloud auth application-default login` or `GOOGLE_APPLICATION_CREDENTIALS` |
 
 **Template mode**: If no key is configured, `spec new` generates a structured skeleton with graph and code context filled in, leaving prose sections for you to complete.
 

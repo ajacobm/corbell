@@ -89,8 +89,8 @@ class TestPRDProcessor:
 class TestTokenUsageTracker:
     def test_record_and_totals(self):
         tracker = TokenUsageTracker()
-        tracker.record("spec_generation", "claude-3-5-sonnet-20241022", 4000, 3200)
-        tracker.record("keyword_extraction", "claude-3-5-sonnet-20241022", 300, 150)
+        tracker.record("spec_generation", "claude-sonnet-4-5-20250929", 4000, 3200)
+        tracker.record("keyword_extraction", "claude-sonnet-4-5-20250929", 300, 150)
         assert tracker.total_input_tokens == 4300
         assert tracker.total_output_tokens == 3350
         assert tracker.total_tokens == 7650
@@ -99,7 +99,7 @@ class TestTokenUsageTracker:
     def test_cost_calculation(self):
         tracker = TokenUsageTracker()
         # 1000 input @ $0.003/1k + 1000 output @ $0.015/1k = $0.018
-        tracker.record("test", "claude-3-5-sonnet-20241022", 1000, 1000)
+        tracker.record("test", "claude-sonnet-4-5-20250929", 1000, 1000)
         assert abs(tracker.total_cost_usd - 0.018) < 0.0001
 
     def test_gpt4o_cost(self):
@@ -115,7 +115,7 @@ class TestTokenUsageTracker:
 
     def test_summary_dict(self):
         tracker = TokenUsageTracker()
-        tracker.record("spec_generation", "claude-3-5-sonnet-20241022", 4000, 3200)
+        tracker.record("spec_generation", "claude-sonnet-4-5-20250929", 4000, 3200)
         d = tracker.summary_dict()
         assert d["calls"] == 1
         assert d["total_tokens"] == 7200
@@ -138,7 +138,7 @@ class TestTokenUsageTracker:
         from io import StringIO
         from rich.console import Console
         tracker = TokenUsageTracker()
-        tracker.record("spec_generation", "claude-3-5-sonnet-20241022", 4000, 3200)
+        tracker.record("spec_generation", "claude-sonnet-4-5-20250929", 4000, 3200)
         tracker.record("keyword_extraction", "gpt-4o", 200, 100)
 
         sio = StringIO()
@@ -153,7 +153,7 @@ class TestTokenUsageTracker:
     def test_token_usage_record_cost(self):
         rec = TokenUsageRecord(
             request_type="test",
-            model="claude-3-5-sonnet-20241022",
+            model="claude-sonnet-4-5-20250929",
             input_tokens=1000,
             output_tokens=500,
         )

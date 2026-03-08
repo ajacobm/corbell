@@ -109,7 +109,7 @@ class LLMConfig(BaseModel):
     """
 
     provider: str = "anthropic"
-    model: str = "claude-3-5-sonnet-20241022"
+    model: str = "claude-sonnet-4-5-20250929"
     api_key: Optional[str] = None
 
     # AWS Bedrock
@@ -331,7 +331,7 @@ integrations:
 llm:
   # ---- Option 1: Anthropic (recommended) ----
   provider: anthropic
-  model: claude-3-5-sonnet-20241022
+  model: claude-sonnet-4-5
   api_key: ${ANTHROPIC_API_KEY}
 
   # ---- Option 2: OpenAI ----
@@ -340,11 +340,19 @@ llm:
   # api_key: ${OPENAI_API_KEY}
 
   # ---- Option 3: AWS Bedrock (Anthropic Claude) ----
-  # Uses AWS credential chain: env vars, ~/.aws/credentials, or instance profile
+  # Two auth options:
+  #
+  # A) Long-term API key (simplest — paste your Bedrock API key directly):
   # provider: aws
-  # model: anthropic.claude-3-5-sonnet-20241022-v2:0
+  # model: us.anthropic.claude-sonnet-4-20250514-v1:0
+  # api_key: ${BEDROCK_API_KEY}    # get this from AWS Bedrock console
   # aws_region: us-east-1
-  # (set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY or use aws configure)
+  #
+  # B) IAM credentials (boto3 credential chain):
+  # provider: aws
+  # model: us.anthropic.claude-sonnet-4-20250514-v1:0
+  # aws_region: us-east-1
+  # (set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY or use: aws configure)
 
   # ---- Option 4: Azure OpenAI ----
   # provider: azure
@@ -357,7 +365,7 @@ llm:
   # ---- Option 5: GCP Vertex AI (Anthropic Claude) ----
   # Auth: gcloud auth application-default login
   # provider: gcp
-  # model: claude-3-5-sonnet@20241022
+  # model: claude-sonnet-4-5@20250514
   # gcp_project: my-gcp-project
   # gcp_region: us-central1
 
