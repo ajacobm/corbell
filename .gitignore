@@ -207,3 +207,10 @@ marimo/_lsp/
 __marimo__/
 
 workspace.yaml
+# Corbell Specific
+corbell/workspace.yaml
+*.review.md
+specs/*.md
+specs/*.tasks.yaml
+.corbell_graph.db
+.corbell_embeddings/
