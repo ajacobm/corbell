@@ -252,12 +252,27 @@ Usage: corbell [OPTIONS] COMMAND [ARGS]...
     decompose   Break approved spec into parallel task YAML
     context     Preview auto-discovered services + code context for a PRD
 
+    mcp        Model Context Protocol (MCP) server integration
+
   export      Export to external tools
     notion      Export spec to Notion
     linear      Create Linear issues from .tasks.yaml
 
   init        Initialize a workspace (creates corbell/workspace.yaml)
 ```
+
+## MCP – Model Context Protocol
+
+The `mcp` command runs the Model Context Protocol server, enabling Corbell to provide context‑aware LLM completions.
+
+```bash
+# Start the MCP server (default host localhost, port 8000)
+corbell mcp serve
+
+# Start on a custom port
+corbell mcp serve --port 9000
+```
+
 
 ---
 
