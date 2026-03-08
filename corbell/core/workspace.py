@@ -101,30 +101,47 @@ class IntegrationsConfig(BaseModel):
 class LLMConfig(BaseModel):
     """LLM provider configuration.
 
-    Supports: openai, anthropic, ollama.
-    API key can be provided here or via CORBELL_LLM_API_KEY / OPENAI_API_KEY /
-    ANTHROPIC_API_KEY environment variables.
+    Local providers: openai, anthropic, ollama.
+    Cloud providers: aws (Bedrock), azure (Azure OpenAI), gcp (Vertex AI).
+
+    API key can be provided here or via env vars:
+    ANTHROPIC_API_KEY, OPENAI_API_KEY, AZURE_OPENAI_API_KEY, CORBELL_LLM_API_KEY
     """
 
     provider: str = "anthropic"
     model: str = "claude-3-5-sonnet-20241022"
     api_key: Optional[str] = None
 
+    # AWS Bedrock
+    aws_region: Optional[str] = None
+
+    # Azure OpenAI
+    azure_endpoint: Optional[str] = None
+    azure_deployment: Optional[str] = None
+    azure_api_version: Optional[str] = None
+
+    # GCP Vertex AI
+    gcp_project: Optional[str] = None
+    gcp_region: Optional[str] = None
+
     model_config = {"extra": "ignore"}
 
     def resolved_api_key(self) -> Optional[str]:
         """Return the API key, resolving env var placeholders if needed."""
         key = self.api_key or ""
-        # Resolve ${VAR} style references
         if key.startswith("${") and key.endswith("}"):
             var = key[2:-1]
             return os.environ.get(var)
         if key:
             return key
+        # Cloud providers use their own credential chains (no API key needed)
+        if self.provider in ("aws", "gcp"):
+            return None
         # Fall back to well-known env vars
         env_map = {
             "openai": "OPENAI_API_KEY",
             "anthropic": "ANTHROPIC_API_KEY",
+            "azure": "AZURE_OPENAI_API_KEY",
             "ollama": None,
         }
         env_var = env_map.get(self.provider.lower(), "CORBELL_LLM_API_KEY")
@@ -312,11 +329,41 @@ integrations:
     default_project_id: ${CORBELL_LINEAR_PROJECT_ID}
 
 llm:
-  # provider: openai | anthropic | ollama
+  # ---- Option 1: Anthropic (recommended) ----
   provider: anthropic
   model: claude-3-5-sonnet-20241022
-  # api_key can also be set via ANTHROPIC_API_KEY or OPENAI_API_KEY env var
-  api_key: ${CORBELL_LLM_API_KEY}
+  api_key: ${ANTHROPIC_API_KEY}
+
+  # ---- Option 2: OpenAI ----
+  # provider: openai
+  # model: gpt-4o
+  # api_key: ${OPENAI_API_KEY}
+
+  # ---- Option 3: AWS Bedrock (Anthropic Claude) ----
+  # Uses AWS credential chain: env vars, ~/.aws/credentials, or instance profile
+  # provider: aws
+  # model: anthropic.claude-3-5-sonnet-20241022-v2:0
+  # aws_region: us-east-1
+  # (set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY or use aws configure)
+
+  # ---- Option 4: Azure OpenAI ----
+  # provider: azure
+  # model: gpt-4o
+  # api_key: ${AZURE_OPENAI_API_KEY}
+  # azure_endpoint: https://my-resource.openai.azure.com/
+  # azure_deployment: my-gpt4o-deployment
+  # azure_api_version: "2024-02-01"
+
+  # ---- Option 5: GCP Vertex AI (Anthropic Claude) ----
+  # Auth: gcloud auth application-default login
+  # provider: gcp
+  # model: claude-3-5-sonnet@20241022
+  # gcp_project: my-gcp-project
+  # gcp_region: us-central1
+
+  # ---- Option 6: Ollama (local, no API key) ----
+  # provider: ollama
+  # model: llama3
 """
     out.write_text(template, encoding="utf-8")
     return out

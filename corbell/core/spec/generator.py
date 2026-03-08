@@ -1,18 +1,15 @@
-"""Design document generator — the heart of Corbell OSS.
+"""Design document generator — the heart of Corbell.
 
-Builds context from the graph, embeddings, and learned docs patterns,
-then calls an LLM (OpenAI/Anthropic) to produce a full technical design
-document in Markdown.
+Builds context from the graph, embeddings, and learned doc patterns,
+then calls an LLM (OpenAI/Anthropic/AWS/Azure/GCP) to produce a full technical
+design document in Markdown.
 
-Key improvements over v1:
-- **Auto service discovery**: No --service flag needed; PRDProcessor discovers
-  relevant services automatically using embedding similarity.
-- **Existing codebase mode**: Generate a design doc for the current codebase
-  without any PRD (pass ``mode="existing"``).
-- **Design doc context**: Existing .md design docs are extracted + fed to LLM.
+Key features:
+- **Auto service discovery**: PRDProcessor discovers relevant services automatically
+  via embedding similarity — no --service flag needed.
+- **Existing codebase mode**: Generate a design doc without any PRD.
+- **Design doc context**: Existing .md design docs are extracted and fed to LLM.
 - **Token tracking**: All LLM calls tracked and summarized.
-
-Adapted from specgen_local/src/design_generator.py.
 """
 
 from __future__ import annotations
@@ -38,7 +35,7 @@ from corbell.core.spec.schema import (
 
 
 # ---------------------------------------------------------------------------
-# System prompts (adapted from specgen_local design_generator.py)
+# System prompts
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
@@ -290,9 +287,7 @@ class SpecGenerator:
         """Generate a design document that describes the EXISTING codebase.
 
         Use this when you have no new PRD — just want to capture what the
-        current system does, how it's structured, and key flows.
-
-        Adapted from specgen_local ``generate_existing_codebase_design``.
+        current system does, how it’s structured, and key flows.
 
         Args:
             output_dir: Directory to write the doc.

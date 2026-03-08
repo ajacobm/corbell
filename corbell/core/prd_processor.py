@@ -1,9 +1,7 @@
 """PRD processor — extract natural-language search queries + service hints for auto-discovery.
 
-Adapted from specgen_local/src/prd_processor.py with OSS improvements:
-- No Supabase dependency
-- Returns service-relevance scores against the graph
-- Also identifies relevant service IDs from graph without user specifying them
+Builds search queries from a PRD and uses embedding similarity to automatically
+discover which services are most relevant — so users don't need to specify --service.
 """
 
 from __future__ import annotations
@@ -42,8 +40,6 @@ class PRDProcessor:
 
         These are sentence-form descriptions, not keyword lists — they embed far
         closer to actual source code than keyword soup.
-
-        Adapted from specgen_local prd_processor.py ``create_search_queries``.
 
         Args:
             prd_text: Full PRD / feature description text.

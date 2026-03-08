@@ -1,7 +1,4 @@
-"""Doc learner — extracts patterns, decisions, and conventions from design docs.
-
-Adapted from specgen_local/src/decision_extractor.py — OSS-clean version (no Supabase).
-"""
+"""Doc learner — extracts patterns, decisions, and conventions from design docs."""
 
 from __future__ import annotations
 
@@ -19,7 +16,7 @@ _DECISION_RE = re.compile(
 )
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---", re.DOTALL)
 
-# Keywords for categorising decision types (from specgen_local pattern_retriever)
+# Keywords for categorising decision types
 _CATEGORY_KEYWORDS = {
     "database_choice": ["database", "storage", "postgres", "dynamodb", "mongodb", "sql"],
     "async_processing": ["queue", "async", "kafka", "sqs", "background", "message"],
@@ -184,7 +181,7 @@ class DocLearner:
         return list(dict.fromkeys(matches))[:5]
 
     # ------------------------------------------------------------------ #
-    # Pattern formatting for LLM prompt (from specgen_local pattern_retriever)
+    # Pattern formatting for LLM prompt
     # ------------------------------------------------------------------ #
 
     def format_patterns_for_prompt(self, patterns: List[DocPattern]) -> str:

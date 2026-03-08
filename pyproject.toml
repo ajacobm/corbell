@@ -37,6 +37,10 @@ neo4j    = ["neo4j>=5.0"]
 chroma   = ["chromadb>=0.5"]
 openai   = ["openai>=1.0"]
 anthropic = ["anthropic>=0.25"]
+# Cloud providers — use your existing cloud credentials / long-term API keys
+aws      = ["boto3>=1.34"]
+azure    = ["openai>=1.0"]  # Azure OpenAI uses the openai SDK with AzureOpenAI client
+gcp      = ["google-cloud-aiplatform>=1.38", "anthropic[vertex]>=0.25"]
 notion   = ["notion-client>=2.0"]
 linear   = ["requests>=2.31"]
 dev      = [

@@ -1,16 +1,23 @@
-"""LLM client for Corbell OSS — with token usage tracking.
+"""LLM client for Corbell — multi-provider with cloud support.
 
-Supports OpenAI, Anthropic, and Ollama providers.
-API keys are read from environment variables or workspace.yaml llm config.
+Supports local providers:
+  - ``anthropic``  — requires ``anthropic>=0.25`` and ANTHROPIC_API_KEY
+  - ``openai``     — requires ``openai>=1.0`` and OPENAI_API_KEY
+  - ``ollama``     — requires a running Ollama server (http://localhost:11434)
 
-No AWS Bedrock dependency — OSS-friendly provider options only.
+And cloud-hosted providers (for enterprise teams with existing cloud commitments):
+  - ``aws``   — Anthropic Claude via AWS Bedrock (boto3 + AWS credentials)
+  - ``azure`` — OpenAI GPT-4 via Azure OpenAI Service (openai + Azure endpoint)
+  - ``gcp``   — Anthropic Claude via GCP Vertex AI (google-cloud-aiplatform)
+
+Token usage is automatically tracked in the provided TokenUsageTracker.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from corbell.core.token_tracker import TokenUsageTracker
@@ -19,13 +26,50 @@ if TYPE_CHECKING:
 class LLMClient:
     """Provider-agnostic LLM client for Corbell.
 
-    Supports:
-    - ``openai``  — requires ``openai>=1.0`` and ``OPENAI_API_KEY``
-    - ``anthropic`` — requires ``anthropic>=0.25`` and ``ANTHROPIC_API_KEY``
-    - ``ollama``  — requires a running Ollama server (http://localhost:11434)
+    **Local providers** (public API keys):
 
-    Falls back to a structured template response when no API key is found.
-    Token usage is automatically tracked in the provided ``TokenUsageTracker``.
+    .. code-block:: yaml
+
+        llm:
+          provider: anthropic
+          model: claude-3-5-sonnet-20241022
+          api_key: ${ANTHROPIC_API_KEY}
+
+    **Cloud providers** (enterprise API keys from your cloud console):
+
+    AWS Bedrock:
+
+    .. code-block:: yaml
+
+        llm:
+          provider: aws
+          model: anthropic.claude-3-5-sonnet-20241022-v2:0
+          aws_region: us-east-1
+          # Credentials from env: AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY
+          # or from ~/.aws/credentials profile
+
+    Azure OpenAI:
+
+    .. code-block:: yaml
+
+        llm:
+          provider: azure
+          model: gpt-4o
+          azure_endpoint: https://my-resource.openai.azure.com/
+          azure_deployment: my-gpt4o-deployment
+          azure_api_version: "2024-02-01"
+          api_key: ${AZURE_OPENAI_API_KEY}
+
+    GCP Vertex AI:
+
+    .. code-block:: yaml
+
+        llm:
+          provider: gcp
+          model: claude-3-5-sonnet@20241022
+          gcp_project: my-gcp-project
+          gcp_region: us-central1
+          # Auth: GOOGLE_APPLICATION_CREDENTIALS or gcloud auth application-default login
     """
 
     def __init__(
@@ -34,28 +78,49 @@ class LLMClient:
         model: Optional[str] = None,
         api_key: Optional[str] = None,
         token_tracker: Optional["TokenUsageTracker"] = None,
+        # Cloud provider config
+        aws_region: Optional[str] = None,
+        azure_endpoint: Optional[str] = None,
+        azure_deployment: Optional[str] = None,
+        azure_api_version: Optional[str] = None,
+        gcp_project: Optional[str] = None,
+        gcp_region: Optional[str] = None,
     ):
         """Initialize the LLM client.
 
         Args:
-            provider: One of ``openai``, ``anthropic``, ``ollama``.
-            model: Model identifier. Defaults per provider:
-                - anthropic: ``claude-3-5-sonnet-20241022``
-                - openai: ``gpt-4o``
-                - ollama: ``llama3``
-            api_key: API key. If None, read from env vars
-                (``ANTHROPIC_API_KEY`` / ``OPENAI_API_KEY`` / ``CORBELL_LLM_API_KEY``).
-            token_tracker: Optional :class:`~corbell.core.token_tracker.TokenUsageTracker`
-                instance. Each API call records its token usage here.
+            provider: One of ``anthropic``, ``openai``, ``ollama``, ``aws``, ``azure``, ``gcp``.
+            model: Model identifier (see defaults per provider below).
+            api_key: API key. If None, resolved from environment variables.
+            token_tracker: Optional :class:`~corbell.core.token_tracker.TokenUsageTracker`.
+                Each API call records its token usage here.
+            aws_region: AWS region for Bedrock (default: ``us-east-1``).
+            azure_endpoint: Azure OpenAI resource endpoint URL.
+            azure_deployment: Azure OpenAI deployment name.
+            azure_api_version: Azure OpenAI API version (default: ``2024-02-01``).
+            gcp_project: GCP project ID for Vertex AI.
+            gcp_region: GCP region for Vertex AI (default: ``us-central1``).
         """
         self.provider = provider.lower()
         self._api_key = api_key or self._resolve_key()
         self.token_tracker = token_tracker
 
+        # Cloud config
+        self.aws_region = aws_region or os.getenv("AWS_REGION", "us-east-1")
+        self.azure_endpoint = azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT", "")
+        self.azure_deployment = azure_deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
+        self.azure_api_version = azure_api_version or os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01")
+        self.gcp_project = gcp_project or os.getenv("GCP_PROJECT", os.getenv("GOOGLE_CLOUD_PROJECT", ""))
+        self.gcp_region = gcp_region or os.getenv("GCP_REGION", "us-central1")
+
         _defaults = {
             "anthropic": "claude-3-5-sonnet-20241022",
             "openai": "gpt-4o",
             "ollama": "llama3",
+            # Cloud defaults
+            "aws": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+            "azure": "gpt-4o",
+            "gcp": "claude-3-5-sonnet@20241022",
         }
         self.model = model or _defaults.get(self.provider, "claude-3-5-sonnet-20241022")
 
@@ -81,37 +146,68 @@ class LLMClient:
             request_type: Label for token tracking (e.g. ``spec_generation``).
 
         Returns:
-            Text response string. Falls back to structured template if no API key.
+            Text response string. Falls back to structured template if no credentials.
         """
-        if not self._api_key and self.provider != "ollama":
+        rt = request_type or "call"
+
+        provider_map = {
+            "anthropic": lambda: self._call_anthropic(system_prompt, user_prompt, max_tokens, temperature, rt),
+            "openai": lambda: self._call_openai(system_prompt, user_prompt, max_tokens, temperature, rt),
+            "ollama": lambda: self._call_ollama(system_prompt, user_prompt, max_tokens),
+            "aws": lambda: self._call_aws_bedrock(system_prompt, user_prompt, max_tokens, temperature, rt),
+            "azure": lambda: self._call_azure_openai(system_prompt, user_prompt, max_tokens, temperature, rt),
+            "gcp": lambda: self._call_gcp_vertex(system_prompt, user_prompt, max_tokens, temperature, rt),
+        }
+
+        if self.provider not in provider_map:
+            return self._fallback_response(system_prompt, user_prompt)
+
+        if not self.is_configured:
             return self._fallback_response(system_prompt, user_prompt)
 
         try:
-            if self.provider == "anthropic":
-                return self._call_anthropic(
-                    system_prompt, user_prompt, max_tokens, temperature,
-                    request_type=request_type or "call",
-                )
-            if self.provider == "openai":
-                return self._call_openai(
-                    system_prompt, user_prompt, max_tokens, temperature,
-                    request_type=request_type or "call",
-                )
-            if self.provider == "ollama":
-                return self._call_ollama(system_prompt, user_prompt, max_tokens)
+            return provider_map[self.provider]()
         except Exception as e:
             print(f"⚠️  LLM call failed ({self.provider}): {e}")
             return self._fallback_response(system_prompt, user_prompt)
 
-        return self._fallback_response(system_prompt, user_prompt)
-
     @property
     def is_configured(self) -> bool:
-        """True if an API key (or Ollama) is available."""
-        return bool(self._api_key) or self.provider == "ollama"
+        """True if credentials are available for the configured provider."""
+        if self.provider == "ollama":
+            return True
+        if self.provider == "aws":
+            # boto3 checks env or ~/.aws/credentials
+            return bool(
+                os.getenv("AWS_ACCESS_KEY_ID")
+                or os.getenv("AWS_PROFILE")
+                or os.path.exists(os.path.expanduser("~/.aws/credentials"))
+            )
+        if self.provider == "azure":
+            return bool(self._api_key and self.azure_endpoint)
+        if self.provider == "gcp":
+            return bool(
+                os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+                or os.getenv("GOOGLE_CLOUD_PROJECT")
+                or self.gcp_project
+            )
+        return bool(self._api_key)
+
+    @property
+    def provider_display(self) -> str:
+        """Human-readable provider description."""
+        labels = {
+            "anthropic": f"Anthropic ({self.model})",
+            "openai": f"OpenAI ({self.model})",
+            "ollama": f"Ollama/{self.model} (local)",
+            "aws": f"AWS Bedrock/{self.model} @ {self.aws_region}",
+            "azure": f"Azure OpenAI/{self.model} ({self.azure_deployment or 'default'})",
+            "gcp": f"GCP Vertex AI/{self.model} @ {self.gcp_region}",
+        }
+        return labels.get(self.provider, self.provider)
 
     # ------------------------------------------------------------------ #
-    # Provider implementations                                             #
+    # Provider implementations — local                                     #
     # ------------------------------------------------------------------ #
 
     def _call_anthropic(
@@ -121,7 +217,7 @@ class LLMClient:
         try:
             import anthropic
         except ImportError:
-            raise ImportError("Install corbell[anthropic] to use Anthropic: pip install corbell[anthropic]")
+            raise ImportError("pip install corbell[anthropic]")
 
         client = anthropic.Anthropic(api_key=self._api_key)
         msg = client.messages.create(
@@ -132,14 +228,8 @@ class LLMClient:
             messages=[{"role": "user", "content": user}],
         )
 
-        # Track token usage
         if self.token_tracker and hasattr(msg, "usage"):
-            self.token_tracker.record(
-                request_type=request_type,
-                model=self.model,
-                input_tokens=msg.usage.input_tokens,
-                output_tokens=msg.usage.output_tokens,
-            )
+            self.token_tracker.record(request_type, self.model, msg.usage.input_tokens, msg.usage.output_tokens)
 
         return msg.content[0].text
 
@@ -150,7 +240,7 @@ class LLMClient:
         try:
             import openai
         except ImportError:
-            raise ImportError("Install corbell[openai] to use OpenAI: pip install corbell[openai]")
+            raise ImportError("pip install corbell[openai]")
 
         client = openai.OpenAI(api_key=self._api_key)
         resp = client.chat.completions.create(
@@ -163,32 +253,27 @@ class LLMClient:
             ],
         )
 
-        # Track token usage
         if self.token_tracker and resp.usage:
             self.token_tracker.record(
-                request_type=request_type,
-                model=self.model,
-                input_tokens=resp.usage.prompt_tokens,
-                output_tokens=resp.usage.completion_tokens,
+                request_type, self.model,
+                resp.usage.prompt_tokens, resp.usage.completion_tokens,
             )
 
         return resp.choices[0].message.content or ""
 
     def _call_ollama(self, system: str, user: str, max_tokens: int) -> str:
-        """Call a local Ollama instance (no token tracking — local model)."""
+        """Call a local Ollama instance (no token tracking — free local model)."""
         import urllib.request
 
-        payload = json.dumps(
-            {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "stream": False,
-                "options": {"num_predict": max_tokens},
-            }
-        ).encode()
+        payload = json.dumps({
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "stream": False,
+            "options": {"num_predict": max_tokens},
+        }).encode()
 
         req = urllib.request.Request(
             "http://localhost:11434/api/chat",
@@ -200,6 +285,144 @@ class LLMClient:
         return data.get("message", {}).get("content", "")
 
     # ------------------------------------------------------------------ #
+    # Provider implementations — cloud                                     #
+    # ------------------------------------------------------------------ #
+
+    def _call_aws_bedrock(
+        self, system: str, user: str, max_tokens: int, temperature: float,
+        request_type: str = "call",
+    ) -> str:
+        """Call Anthropic Claude via AWS Bedrock.
+
+        Credentials resolved automatically from:
+        - Environment variables: AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_SESSION_TOKEN
+        - AWS profiles: AWS_PROFILE or ~/.aws/credentials
+        - EC2/ECS/Lambda instance metadata (when running in AWS)
+
+        Set CORBELL_AWS_REGION or aws_region in workspace.yaml to control the region.
+        """
+        try:
+            import boto3
+        except ImportError:
+            raise ImportError(
+                "pip install boto3\n"
+                "Then configure credentials: aws configure (or set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY)"
+            )
+
+        client = boto3.client("bedrock-runtime", region_name=self.aws_region)
+
+        body = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+        })
+
+        resp = client.invoke_model(modelId=self.model, body=body)
+        result = json.loads(resp["body"].read())
+
+        # Track tokens
+        if self.token_tracker:
+            usage = result.get("usage", {})
+            self.token_tracker.record(
+                request_type, self.model,
+                usage.get("input_tokens", 0),
+                usage.get("output_tokens", 0),
+            )
+
+        return result["content"][0]["text"]
+
+    def _call_azure_openai(
+        self, system: str, user: str, max_tokens: int, temperature: float,
+        request_type: str = "call",
+    ) -> str:
+        """Call GPT-4 models via Azure OpenAI Service.
+
+        Requires:
+        - AZURE_OPENAI_API_KEY (or api_key in workspace.yaml)
+        - AZURE_OPENAI_ENDPOINT (e.g. https://my-resource.openai.azure.com/)
+        - AZURE_OPENAI_DEPLOYMENT (your deployment name, e.g. gpt-4o-prod)
+
+        Set these in your .env or workspace.yaml llm block.
+        """
+        try:
+            import openai
+        except ImportError:
+            raise ImportError("pip install corbell[openai]")
+
+        deployment = self.azure_deployment or self.model
+        client = openai.AzureOpenAI(
+            api_key=self._api_key,
+            azure_endpoint=self.azure_endpoint,
+            azure_deployment=deployment,
+            api_version=self.azure_api_version,
+        )
+
+        resp = client.chat.completions.create(
+            model=deployment,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+
+        if self.token_tracker and resp.usage:
+            self.token_tracker.record(
+                request_type, f"azure/{deployment}",
+                resp.usage.prompt_tokens, resp.usage.completion_tokens,
+            )
+
+        return resp.choices[0].message.content or ""
+
+    def _call_gcp_vertex(
+        self, system: str, user: str, max_tokens: int, temperature: float,
+        request_type: str = "call",
+    ) -> str:
+        """Call Anthropic Claude via GCP Vertex AI.
+
+        Auth options (pick one):
+        1. Application Default Credentials: ``gcloud auth application-default login``
+        2. Service account: set GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json
+
+        Set GCP_PROJECT + GCP_REGION in .env or workspace.yaml.
+
+        Requires: ``pip install "google-cloud-aiplatform>=1.38" anthropic[vertex]``
+        """
+        try:
+            import anthropic
+            from anthropic import AnthropicVertex  # type: ignore[attr-defined]
+        except (ImportError, AttributeError):
+            raise ImportError(
+                "pip install anthropic[vertex] google-cloud-aiplatform\n"
+                "Then authenticate: gcloud auth application-default login\n"
+                "Or set GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account-key.json"
+            )
+
+        client = AnthropicVertex(
+            project_id=self.gcp_project,
+            region=self.gcp_region,
+        )
+
+        msg = client.messages.create(
+            model=self.model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+
+        if self.token_tracker and hasattr(msg, "usage"):
+            self.token_tracker.record(
+                request_type, f"gcp/{self.model}",
+                msg.usage.input_tokens, msg.usage.output_tokens,
+            )
+
+        return msg.content[0].text
+
+    # ------------------------------------------------------------------ #
     # Helpers                                                              #
     # ------------------------------------------------------------------ #
 
@@ -207,7 +430,10 @@ class LLMClient:
         env_map = {
             "anthropic": ["ANTHROPIC_API_KEY", "CORBELL_LLM_API_KEY"],
             "openai": ["OPENAI_API_KEY", "CORBELL_LLM_API_KEY"],
+            "azure": ["AZURE_OPENAI_API_KEY", "CORBELL_LLM_API_KEY"],
             "ollama": [],
+            "aws": [],   # Uses boto3 credential chain
+            "gcp": [],   # Uses Google ADC
         }
         for var in env_map.get(self.provider, ["CORBELL_LLM_API_KEY"]):
             val = os.environ.get(var)
@@ -216,29 +442,47 @@ class LLMClient:
         return None
 
     def _fallback_response(self, system: str, user: str) -> str:
-        """Return a structured template when no LLM is available."""
+        """Return a structured template when no LLM credentials are available."""
         if "design document" in system.lower() or "technical design" in system.lower():
             return _MOCK_DESIGN_DOC
         if "design decisions" in system.lower() or "extract" in system.lower():
             return "[]"
         if "pattern" in system.lower():
             return "{}"
-        if "search" in system.lower() or "keywords" in system.lower() or "queries" in system.lower():
-            # Fallback: split user text into sentences
+        if any(kw in system.lower() for kw in ("search", "keywords", "queries")):
             import re
             sentences = [s.strip() for s in re.split(r'[.\n]', user) if len(s.strip()) > 30]
             return "\n".join(sentences[:3]) if sentences else user[:200]
         return (
-            "⚠️  No LLM API key configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY "
-            "and re-run, or pass --no-llm to use template mode."
+            "⚠️  No LLM credentials configured.\n"
+            "\n"
+            "Quick setup — pick your provider:\n"
+            "\n"
+            "  Anthropic:   export ANTHROPIC_API_KEY=sk-ant-...\n"
+            "  OpenAI:      export OPENAI_API_KEY=sk-...\n"
+            "  AWS Bedrock: export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_REGION=us-east-1\n"
+            "  Azure:       export AZURE_OPENAI_API_KEY=... AZURE_OPENAI_ENDPOINT=https://...\n"
+            "               export AZURE_OPENAI_DEPLOYMENT=my-gpt4o\n"
+            "  GCP Vertex:  gcloud auth application-default login\n"
+            "               export GCP_PROJECT=my-project GCP_REGION=us-central1\n"
+            "\n"
+            "Update corbell/workspace.yaml llm.provider accordingly, then re-run."
         )
 
 
 _MOCK_DESIGN_DOC = """\
 # Technical Design Document
 
-> ⚠️ **Template mode**: LLM provider not configured.
-> Set `ANTHROPIC_API_KEY` (Anthropic) or `OPENAI_API_KEY` (OpenAI) and re-run.
+> ⚠️ **Template mode**: No LLM credentials configured.
+>
+> Quick setup options:
+> - Anthropic: `export ANTHROPIC_API_KEY=sk-ant-...`
+> - OpenAI: `export OPENAI_API_KEY=sk-...`
+> - AWS Bedrock: `export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_REGION=us-east-1`
+> - Azure: `export AZURE_OPENAI_API_KEY=... AZURE_OPENAI_ENDPOINT=https://...`
+> - GCP Vertex: `gcloud auth application-default login && export GCP_PROJECT=...`
+>
+> See README.md → LLM Providers for full instructions.
 
 ## Context
 
@@ -260,14 +504,13 @@ _MOCK_DESIGN_DOC = """\
 
 <!-- Sequence or description of how data moves. -->
 
-### Failure Modes
+### Failure Modes and Mitigations
 
 <!-- What can go wrong, how each is handled. -->
 
 ## Reliability and Risk Constraints
 
 <!-- CORBELL_CONSTRAINTS_START -->
-<!-- Constraints go here. -->
 <!-- CORBELL_CONSTRAINTS_END -->
 
 ## Rollout Plan

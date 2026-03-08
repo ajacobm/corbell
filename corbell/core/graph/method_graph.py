@@ -1,6 +1,6 @@
 """Method-call AST graph builder.
 
-Adapted from specgen-repo-scanner/service_graph/method_flow_analyzer.py.
+Builds method-level call graphs from source code using AST analysis.
 Extracts function/method nodes from Python (using ast) and JS/Java/Go (using regex).
 """
 

@@ -1,6 +1,6 @@
 """Code chunk extractor for embedding indexing.
 
-Adapted from specgen-repo-scanner/repo_scanner.py.
+Extracts code chunks (functions, classes, methods) from source files.
 Extracts function/class/method chunks using Python ast; generic line-split for others.
 """
 

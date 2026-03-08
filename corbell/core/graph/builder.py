@@ -1,6 +1,6 @@
 """Service-level graph builder.
 
-Adapted from specgen-repo-scanner/service_graph/service_graph_builder.py.
+Scans local repos and builds a service dependency graph.
 Scans local repos, detects service boundaries, DB/queue deps, and HTTP calls.
 No Neo4j dependency — uses the pluggable GraphStore interface.
 """
@@ -20,7 +20,7 @@ from corbell.core.graph.schema import (
 )
 
 # ---------------------------------------------------------------------------
-# Patterns (adapted from specgen-repo-scanner/service_graph/patterns.py)
+# Service pattern detection rules
 # ---------------------------------------------------------------------------
 
 _PYTHON_SERVICE_PATTERNS = [

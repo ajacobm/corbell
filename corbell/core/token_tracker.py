@@ -1,6 +1,5 @@
-"""Token usage tracker — local, no Supabase required.
+"""Token usage tracker — local, no external dependencies.
 
-Adapted from specgen_local/src/token_tracker.py.
 Tracks per-call token usage (input + output) and estimated cost.
 Accumulates usage across the entire CLI session and displays a rich summary.
 
