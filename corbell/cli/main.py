@@ -33,6 +33,7 @@ from corbell.cli.commands.docs import app as docs_app
 from corbell.cli.commands.spec import app as spec_app
 from corbell.cli.commands.export import app as export_app
 from corbell.cli.commands.mcp import app as mcp_app
+from corbell.cli.commands.ui import app as ui_app
 from corbell.cli.commands.init import init_cmd
 
 
@@ -72,6 +73,7 @@ app.add_typer(docs_app, name="docs", help="Design doc scan and pattern learning.
 app.add_typer(spec_app, name="spec", help="Spec lifecycle: new → lint → review → approve → decompose.")
 app.add_typer(export_app, name="export", help="Export to Notion or Linear.")
 app.add_typer(mcp_app, name="mcp", help="Model Context Protocol (MCP) server integration.")
+app.add_typer(ui_app, name="ui", help="Architecture graph browser UI — start with: corbell ui serve")
 
 
 def main():
