@@ -273,6 +273,13 @@ corbell mcp serve
 corbell mcp serve --port 9000
 ```
 
+If your IDE or MCP client (like Cursor or Claude Desktop) overrides the working directory during startup, you can explicitly set the `CORBELL_WORKSPACE` environment variable to the absolute path of your workspace root (the directory containing `corbell/workspace.yaml`):
+
+```bash
+# Configure this in your IDE's MCP settings
+env CORBELL_WORKSPACE=/path/to/my-platform corbell mcp serve
+```
+
 
 ---
 
