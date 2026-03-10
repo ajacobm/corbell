@@ -210,7 +210,11 @@ workspace.yaml
 # Corbell Specific
 corbell/workspace.yaml
 *.review.md
-specs/*.md
+specs/
 specs/*.tasks.yaml
 .corbell_graph.db
 .corbell_embeddings/
+/spec*
+corbell/.corbell/
+corbell/specs/
+docs/
