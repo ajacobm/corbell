@@ -96,7 +96,11 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .link.http_call{stroke:var(--accent);stroke-width:1.5}
 .link.queue_publish{stroke:var(--purple);stroke-width:1.5}
 .link.git_coupling{stroke:var(--red);stroke-width:1;stroke-dasharray:4,3}
+.link.flow_link{stroke:var(--pink);stroke-width:1.5;stroke-dasharray:4,4;stroke-opacity:0.5}
 .link.hovered{stroke-opacity:1;stroke-width:2.5}
+.node.faded circle { stroke-opacity: 0.15 !important; fill-opacity: 0.2 !important; filter: none !important; }
+.node.faded text { opacity: 0.2 !important; }
+.link.faded { stroke-opacity: 0.05 !important; }
 
 /* Tooltip */
 #tooltip{position:fixed;pointer-events:none;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;z-index:999;opacity:0;transition:opacity 0.15s;max-width:220px}
@@ -272,8 +276,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <script>
 // ── Color helpers ──────────────────────────────────────────────────────────
 const LANG_COLOR = {python:'#3572A5',javascript:'#f1e05a',typescript:'#3178c6',go:'#00ADD8',java:'#b07219',default:'#8b949e'};
-const KIND_COLOR = {db_read:'#ffa657',http_call:'#58a6ff',queue_publish:'#bc8cff',git_coupling:'#ff7b72'};
-const KIND_ICON  = {db_read:'🗄',http_call:'🌐',queue_publish:'📨',flow_step:'▶',git_coupling:'⚡'};
+const KIND_COLOR = {db_read:'#ffa657',http_call:'#58a6ff',queue_publish:'#bc8cff',git_coupling:'#ff7b72',flow_link:'#ff7eb6'};
+const KIND_ICON  = {db_read:'🗄',http_call:'🌐',queue_publish:'📨',flow_step:'▶',git_coupling:'⚡',flow_link:'▶'};
 
 // ── State ──────────────────────────────────────────────────────────────────
 let graphData = null;
@@ -502,16 +506,37 @@ function selectNode(id, type) {
   document.querySelectorAll('.node').forEach(el=>el.classList.remove('selected'));
   document.querySelectorAll(`.node[data-id="${id}"]`).forEach(el=>el.classList.add('selected'));
   document.querySelectorAll('.sidebar-item').forEach(el=>el.classList.toggle('active',el.dataset.id===id));
-  if(type==='service') loadDetail(id);
-  else showSimpleDetail(id, type);
+  
+  if(type==='service') {
+    focusOnNode(id);
+    loadDetail(id);
+  } else {
+    unfocus();
+    showSimpleDetail(id, type);
+  }
 }
 
 function deselect() {
   selectedId=null;
   document.querySelectorAll('.node').forEach(el=>el.classList.remove('selected'));
   document.querySelectorAll('.sidebar-item').forEach(el=>el.classList.remove('active'));
+  unfocus();
   document.getElementById('detail-empty').style.display='flex';
   document.getElementById('detail-content').style.display='none';
+}
+
+function focusOnNode(centerId) {
+  const neighbors = new Set([centerId]);
+  graphData.edges.forEach(e => {
+    if(e.source.id === centerId) neighbors.add(e.target.id);
+    if(e.target.id === centerId) neighbors.add(e.source.id);
+  });
+  d3.selectAll('.node').classed('faded', d => !neighbors.has(d.id));
+  d3.selectAll('.link').classed('faded', d => d.source.id !== centerId && d.target.id !== centerId);
+}
+
+function unfocus() {
+  d3.selectAll('.node, .link').classed('faded', false);
 }
 
 // ── Detail panel ────────────────────────────────────────────────────────────
@@ -582,10 +607,11 @@ async function loadDetail(serviceId) {
 
     <div class="detail-section">
       <h4>Methods <span class="count">${d.method_count}</span></h4>
-      <div class="method-list">
+      <div id="mini-method-graph" style="height:140px;margin-bottom:10px;background:var(--bg);border-radius:6px;border:1px solid var(--border);position:relative;overflow:hidden;display:${d.method_edges&&d.method_edges.length?'block':'none'}"></div>
+      <div class="method-list" style="${d.method_edges&&d.method_edges.length?'max-height:140px':''}">
         ${d.methods.slice(0,50).map(m=>{
           const sig=m.signature||(m.class_name?`${m.class_name}.${m.name}`:`${m.name}`);
-          return `<div class="method-item">
+          return `<div class="method-item" title="${htmlEsc(m.id)}">
             <div class="method-sig">${htmlEsc(sig)}</div>
             <div class="method-file">${m.file} ${m.line?`:${m.line}`:''}</div>
           </div>`;
@@ -595,6 +621,41 @@ async function loadDetail(serviceId) {
       </div>
     </div>
   `;
+  if(d.method_edges && d.method_edges.length) drawMiniGraph(d.methods, d.method_edges);
+}
+
+function drawMiniGraph(methods, edges) {
+  const container = document.getElementById('mini-method-graph');
+  const W = container.clientWidth, H = container.clientHeight;
+  const svg = d3.select(container).append('svg').attr('width', W).attr('height', H);
+  
+  // local copy for sim
+  const mNodes = methods.map(m => Object.assign({}, m));
+  const mMap = Object.fromEntries(mNodes.map(m => [m.id, m]));
+  const mEdges = edges.filter(e => mMap[e.source] && mMap[e.target]).map(e => Object.assign({}, e, {source: mMap[e.source], target: mMap[e.target]}));
+  
+  svg.append('defs').append('marker').attr('id','arrow-method').attr('viewBox','0 -3 6 6').attr('refX',7).attr('refY',0).attr('markerWidth',4).attr('markerHeight',4).attr('orient','auto')
+     .append('path').attr('d','M0,-3L6,0L0,3').attr('fill','var(--text3)');
+     
+  const link = svg.append('g').selectAll('line').data(mEdges).join('line')
+    .attr('stroke', 'var(--border)')
+    .attr('marker-end', 'url(#arrow-method)');
+    
+  const node = svg.append('g').selectAll('circle').data(mNodes).join('circle')
+    .attr('r', 3)
+    .attr('fill', 'var(--teal)')
+    .on('mouseover', (e,d) => showTooltip(e, d.name, d.file))
+    .on('mouseout', hideTooltip)
+    .on('mousemove', moveTooltip);
+    
+  d3.forceSimulation(mNodes)
+    .force('link', d3.forceLink(mEdges).id(d=>d.id).distance(15))
+    .force('charge', d3.forceManyBody().strength(-20))
+    .force('center', d3.forceCenter(W/2, H/2))
+    .on('tick', () => {
+      link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
+      node.attr('cx',d=>Math.max(3,Math.min(W-3,d.x))).attr('cy',d=>Math.max(3,Math.min(H-3,d.y)));
+    });
 }
 
 function showSimpleDetail(id, type) {

@@ -32,7 +32,7 @@ def _find_workspace(start: Optional[Path] = None) -> Optional[Path]:
     if env_root:
         p = Path(env_root)
         candidates = [
-            p / "corbell" / "workspace.yaml",
+            p / "corbell-data" / "workspace.yaml",
             p / "workspace.yaml",
         ]
         for c in candidates:
@@ -41,7 +41,7 @@ def _find_workspace(start: Optional[Path] = None) -> Optional[Path]:
     from corbell.core.workspace import find_workspace_root
     root = find_workspace_root(start or Path.cwd())
     if root:
-        for sub in (root / "corbell" / "workspace.yaml", root / "workspace.yaml"):
+        for sub in (root / "corbell-data" / "workspace.yaml", root / "workspace.yaml"):
             if sub.exists():
                 return sub
     return None
@@ -88,11 +88,19 @@ def _fetch_graph(conn: sqlite3.Connection) -> Dict[str, Any]:
         elif ntype == "queue":
             node.update({"label": data.get("name", row["id"]), "kind": data.get("kind", "")})
         elif ntype == "flow":
+            svc_id = data.get("service_id", "")
             node.update({
                 "label": data.get("name", row["id"]),
-                "service_id": data.get("service_id", ""),
+                "service_id": svc_id,
                 "step_count": data.get("step_count", 0),
             })
+            if svc_id:
+                edges.append({
+                    "source": svc_id,
+                    "target": row["id"],
+                    "kind": "flow_link",
+                    "meta": {}
+                })
         elif ntype == "method":
             continue  # don't clutter service-level graph with method nodes
         nodes.append(node)
@@ -148,13 +156,16 @@ def _fetch_service_detail(conn: sqlite3.Connection, service_id: str) -> Dict[str
 
     # Methods (top 60)
     mrows = conn.execute(
-        "SELECT data FROM graph_nodes WHERE node_type='method'",
+        "SELECT id, data FROM graph_nodes WHERE node_type='method'",
     ).fetchall()
     methods = []
+    svc_method_ids = set()
     for mr in mrows:
         d = json.loads(mr["data"])
         if d.get("service_id") == service_id:
+            svc_method_ids.add(mr["id"])
             methods.append({
+                "id": mr["id"],
                 "name": d.get("method_name", ""),
                 "class_name": d.get("class_name"),
                 "signature": d.get("typed_signature") or d.get("signature", ""),
@@ -163,6 +174,18 @@ def _fetch_service_detail(conn: sqlite3.Connection, service_id: str) -> Dict[str
                 "docstring": d.get("docstring"),
             })
     methods.sort(key=lambda m: (m["file"], m["line"]))
+
+    # Internal method calls
+    method_edges = []
+    if svc_method_ids:
+        placeholders = ",".join("?" * len(svc_method_ids))
+        query = f"SELECT source_id, target_id FROM graph_edges WHERE kind='method_call' AND source_id IN ({placeholders}) AND target_id IN ({placeholders})"
+        try:
+            call_rows = conn.execute(query, list(svc_method_ids) * 2).fetchall()
+            for cr in call_rows:
+                method_edges.append({"source": cr["source_id"], "target": cr["target_id"]})
+        except Exception:
+            pass
 
     # Outbound deps
     dep_rows = conn.execute(
@@ -225,6 +248,7 @@ def _fetch_service_detail(conn: sqlite3.Connection, service_id: str) -> Dict[str
         "callers": callers,
         "flows": flows,
         "coupling": coupling[:20],
+        "method_edges": method_edges,
     }
 
 
