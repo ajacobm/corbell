@@ -32,12 +32,13 @@ def embeddings_build(
 ):
     """Index code chunks from all (or one) service repo(s)."""
     from corbell.core.embeddings.extractor import CodeChunkExtractor
+    from corbell.core.embeddings.factory import get_embedding_store
     from corbell.core.embeddings.model import SentenceTransformerModel
-    from corbell.core.embeddings.sqlite_store import SQLiteEmbeddingStore
 
     cfg, config_dir = _load(workspace)
     db_path = cfg.db_path(config_dir)
-    store = SQLiteEmbeddingStore(db_path)
+    embedding_backend = cfg.storage.embeddings.backend
+    store = get_embedding_store(embedding_backend, db_path)
 
     services = cfg.services
     if service:
@@ -91,11 +92,11 @@ def embeddings_query(
     service: Optional[str] = typer.Option(None, "--service", "-s"),
 ):
     """Search the embedding index with a text query."""
+    from corbell.core.embeddings.factory import get_embedding_store
     from corbell.core.embeddings.model import SentenceTransformerModel
-    from corbell.core.embeddings.sqlite_store import SQLiteEmbeddingStore
 
     cfg, config_dir = _load(workspace)
-    store = SQLiteEmbeddingStore(cfg.db_path(config_dir))
+    store = get_embedding_store(cfg.storage.embeddings.backend, cfg.db_path(config_dir))
 
     if store.count() == 0:
         console.print("[yellow]Embedding index is empty — run `corbell embeddings:build` first.[/yellow]")

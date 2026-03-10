@@ -1,6 +1,7 @@
 """SQLite backing store for code embeddings.
 
 Stores embedding vectors as binary blobs and provides cosine-similarity search.
+Implements :class:`~corbell.core.embeddings.base.EmbeddingStore`.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
+from corbell.core.embeddings.base import EmbeddingStore
 from corbell.core.embeddings.extractor import EmbeddingRecord
 
 _CREATE_CHUNKS = """
@@ -33,10 +35,11 @@ CREATE TABLE IF NOT EXISTS embedding_chunks (
 _CREATE_IDX = "CREATE INDEX IF NOT EXISTS idx_chunks_service ON embedding_chunks(service_id);"
 
 
-class SQLiteEmbeddingStore:
+class SQLiteEmbeddingStore(EmbeddingStore):
     """SQLite-backed embedding store with cosine-similarity search.
 
     The embedding vector is stored as a raw float32 blob for compactness.
+    Implements :class:`~corbell.core.embeddings.base.EmbeddingStore`.
     """
 
     def __init__(self, db_path: Path | str):
