@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from corbell.core.graph.schema import (
     DataStoreNode,
     DependencyEdge,
+    FlowNode,
     GraphStore,
     MethodNode,
     QueueNode,
@@ -51,7 +52,7 @@ def _node_to_dict(node: ServiceNode | DataStoreNode | QueueNode | MethodNode) ->
     return d
 
 
-def _dict_to_node(node_type: str, data: dict) -> ServiceNode | DataStoreNode | QueueNode | MethodNode:
+def _dict_to_node(node_type: str, data: dict) -> ServiceNode | DataStoreNode | QueueNode | MethodNode | FlowNode:
     """Deserialize a dict back to a typed node dataclass."""
     if node_type == "service":
         return ServiceNode(**{k: v for k, v in data.items() if k in ServiceNode.__dataclass_fields__})
@@ -61,6 +62,8 @@ def _dict_to_node(node_type: str, data: dict) -> ServiceNode | DataStoreNode | Q
         return QueueNode(**data)
     if node_type == "method":
         return MethodNode(**{k: v for k, v in data.items() if k in MethodNode.__dataclass_fields__})
+    if node_type == "flow":
+        return FlowNode(**{k: v for k, v in data.items() if k in FlowNode.__dataclass_fields__})
     raise ValueError(f"Unknown node_type: {node_type}")
 
 
@@ -73,6 +76,8 @@ def _node_type_str(node) -> str:
         return "queue"
     if isinstance(node, MethodNode):
         return "method"
+    if isinstance(node, FlowNode):
+        return "flow"
     raise TypeError(f"Unsupported node type: {type(node)}")
 
 
@@ -226,6 +231,58 @@ class SQLiteGraphStore(GraphStore):
                 if data.get("service_id") == service_id:
                     results.append(_dict_to_node("method", data))
             return results
+
+    def get_callers_of_method(self, method_id: str) -> List[MethodNode]:
+        """Return all MethodNodes that have a method_call edge targeting method_id."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT source_id FROM graph_edges WHERE target_id = ? AND kind = 'method_call'",
+                (method_id,),
+            ).fetchall()
+            caller_ids = [r["source_id"] for r in rows]
+
+        result: List[MethodNode] = []
+        with self._conn() as conn:
+            for cid in caller_ids:
+                row = conn.execute(
+                    "SELECT * FROM graph_nodes WHERE id = ? AND node_type = 'method'",
+                    (cid,),
+                ).fetchone()
+                if row:
+                    result.append(self._load_node(row))  # type: ignore[arg-type]
+        return result
+
+    def get_flows_for_method(self, method_id: str) -> List[dict]:
+        """Return flows that include method_id as a step.
+
+        Each returned dict has keys: ``flow_id``, ``flow_name``, ``step``,
+        ``entry_method_id``.
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT source_id, metadata FROM graph_edges "
+                "WHERE target_id = ? AND kind = 'flow_step'",
+                (method_id,),
+            ).fetchall()
+
+        result = []
+        with self._conn() as conn:
+            for row in rows:
+                flow_id = row["source_id"]
+                meta = json.loads(row["metadata"] or "{}")
+                flow_row = conn.execute(
+                    "SELECT data FROM graph_nodes WHERE id = ? AND node_type = 'flow'",
+                    (flow_id,),
+                ).fetchone()
+                if flow_row:
+                    flow_data = json.loads(flow_row["data"])
+                    result.append({
+                        "flow_id": flow_id,
+                        "flow_name": flow_data.get("name", ""),
+                        "step": meta.get("step", 0),
+                        "entry_method_id": flow_data.get("entry_method_id", ""),
+                    })
+        return result
 
     def get_all_nodes_summary(self) -> Dict[str, Any]:
         with self._conn() as conn:

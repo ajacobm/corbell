@@ -74,6 +74,53 @@ _PYTHON_DB_PATTERNS = [
     {"pattern": "GraphDatabase.driver", "db_type": "neo4j"},
 ]
 
+_JS_DB_PATTERNS = [
+    {"pattern": "pg.Pool(", "db_type": "postgres"},
+    {"pattern": "new Pool(", "db_type": "postgres"},
+    {"pattern": "createPool(", "db_type": "mysql"},
+    {"pattern": "mongoose.connect(", "db_type": "mongodb"},
+    {"pattern": "new MongoClient(", "db_type": "mongodb"},
+    {"pattern": "redis.createClient(", "db_type": "redis"},
+    {"pattern": "new Redis(", "db_type": "redis"},
+    {"pattern": "createClient({", "db_type": "redis"},
+    {"pattern": "new Sequelize(", "db_type": "postgres"},
+    {"pattern": "DynamoDBClient(", "db_type": "dynamodb"},
+    {"pattern": "createClient({ url", "db_type": "supabase"},
+    {"pattern": "PrismaClient", "db_type": "postgres"},
+    {"pattern": "knex(", "db_type": "postgres"},
+]
+
+_GO_DB_PATTERNS = [
+    {"pattern": "sql.Open(", "db_type": "postgres"},
+    {"pattern": "pgx.Connect(", "db_type": "postgres"},
+    {"pattern": "gorm.Open(", "db_type": "postgres"},
+    {"pattern": "mongo.Connect(", "db_type": "mongodb"},
+    {"pattern": "redis.NewClient(", "db_type": "redis"},
+    {"pattern": "dynamodb.New(", "db_type": "dynamodb"},
+    {"pattern": "bolt.Open(", "db_type": "sqlite"},
+    {"pattern": "neo4j.NewDriver(", "db_type": "neo4j"},
+]
+
+_JAVA_DB_PATTERNS = [
+    {"pattern": "DriverManager.getConnection(", "db_type": "postgres"},
+    {"pattern": "@Repository", "db_type": "postgres"},
+    {"pattern": "JdbcTemplate", "db_type": "postgres"},
+    {"pattern": "new MongoClient(", "db_type": "mongodb"},
+    {"pattern": "MongoClients.create(", "db_type": "mongodb"},
+    {"pattern": "JedisPool(", "db_type": "redis"},
+    {"pattern": "RedisConnectionFactory", "db_type": "redis"},
+    {"pattern": "EntityManager", "db_type": "postgres"},
+]
+
+_LANG_DB_PATTERNS: Dict[str, List] = {
+    "python":     _PYTHON_DB_PATTERNS,
+    "javascript": _JS_DB_PATTERNS,
+    "typescript": _JS_DB_PATTERNS,
+    "java":       _JAVA_DB_PATTERNS,
+    "go":         _GO_DB_PATTERNS,
+    "ruby":       [],
+}
+
 _PYTHON_QUEUE_PATTERNS = [
     {"pattern": "boto3.client('sqs')", "queue_type": "sqs"},
     {"pattern": "pika.BlockingConnection", "queue_type": "rabbitmq"},
@@ -81,12 +128,89 @@ _PYTHON_QUEUE_PATTERNS = [
     {"pattern": "KafkaConsumer(", "queue_type": "kafka"},
 ]
 
+_JS_QUEUE_PATTERNS = [
+    {"pattern": "new Kafka(", "queue_type": "kafka"},
+    {"pattern": "kafkajs", "queue_type": "kafka"},
+    {"pattern": "amqplib.connect(", "queue_type": "rabbitmq"},
+    {"pattern": "new SQSClient(", "queue_type": "sqs"},
+    {"pattern": "new Bull(", "queue_type": "redis"},
+    {"pattern": "new Queue(", "queue_type": "redis"},
+    {"pattern": "PubSub(", "queue_type": "pubsub"},
+]
+
+_GO_QUEUE_PATTERNS = [
+    {"pattern": "kafka.NewWriter(", "queue_type": "kafka"},
+    {"pattern": "sarama.NewClient(", "queue_type": "kafka"},
+    {"pattern": "amqp.Dial(", "queue_type": "rabbitmq"},
+    {"pattern": "sqs.New(", "queue_type": "sqs"},
+    {"pattern": "pubsub.NewClient(", "queue_type": "pubsub"},
+]
+
+_JAVA_QUEUE_PATTERNS = [
+    {"pattern": "KafkaProducer(", "queue_type": "kafka"},
+    {"pattern": "@KafkaListener", "queue_type": "kafka"},
+    {"pattern": "RabbitTemplate", "queue_type": "rabbitmq"},
+    {"pattern": "@RabbitListener", "queue_type": "rabbitmq"},
+    {"pattern": "AmazonSQS", "queue_type": "sqs"},
+    {"pattern": "@SqsListener", "queue_type": "sqs"},
+]
+
+_LANG_QUEUE_PATTERNS: Dict[str, List] = {
+    "python":     _PYTHON_QUEUE_PATTERNS,
+    "javascript": _JS_QUEUE_PATTERNS,
+    "typescript": _JS_QUEUE_PATTERNS,
+    "java":       _JAVA_QUEUE_PATTERNS,
+    "go":         _GO_QUEUE_PATTERNS,
+    "ruby":       [],
+}
+
 _PYTHON_HTTP_PATTERNS = [
     {"pattern": "requests.get(", "call_type": "http_call"},
     {"pattern": "requests.post(", "call_type": "http_call"},
     {"pattern": "httpx.AsyncClient", "call_type": "http_call"},
     {"pattern": "aiohttp.ClientSession", "call_type": "http_call"},
     {"pattern": "urllib.request", "call_type": "http_call"},
+]
+
+_JS_HTTP_PATTERNS = [
+    {"pattern": "fetch(", "call_type": "http_call"},
+    {"pattern": "axios.get(", "call_type": "http_call"},
+    {"pattern": "axios.post(", "call_type": "http_call"},
+    {"pattern": "axios.request(", "call_type": "http_call"},
+    {"pattern": "axios.create(", "call_type": "http_call"},
+    {"pattern": "http.get(", "call_type": "http_call"},
+    {"pattern": "got.get(", "call_type": "http_call"},
+    {"pattern": "superagent.get(", "call_type": "http_call"},
+]
+
+_GO_HTTP_PATTERNS = [
+    {"pattern": "http.Get(", "call_type": "http_call"},
+    {"pattern": "http.Post(", "call_type": "http_call"},
+    {"pattern": "http.NewRequest(", "call_type": "http_call"},
+    {"pattern": "client.Do(", "call_type": "http_call"},
+]
+
+_JAVA_HTTP_PATTERNS = [
+    {"pattern": "HttpClient", "call_type": "http_call"},
+    {"pattern": "RestTemplate", "call_type": "http_call"},
+    {"pattern": "WebClient", "call_type": "http_call"},
+    {"pattern": "HttpURLConnection", "call_type": "http_call"},
+    {"pattern": "OkHttpClient", "call_type": "http_call"},
+]
+
+_LANG_HTTP_PATTERNS: Dict[str, List] = {
+    "python":     _PYTHON_HTTP_PATTERNS,
+    "javascript": _JS_HTTP_PATTERNS,
+    "typescript": _JS_HTTP_PATTERNS,
+    "java":       _JAVA_HTTP_PATTERNS,
+    "go":         _GO_HTTP_PATTERNS,
+    "ruby":       [],
+}
+
+# Env-var patterns that indicate a URL is looked up from config (any language)
+_ENV_URL_PATTERNS = [
+    "process.env.", "os.getenv(", "os.environ[",
+    "System.getenv(", "os.Getenv(",
 ]
 
 _SKIP_DIRS = {
@@ -179,14 +303,47 @@ class ServiceGraphBuilder:
         for svc in discovered:
             self._detect_http_calls(svc, all_service_ids)
 
-        # Phase 4: method-level graph
+        # Phase 4: method-level graph + git coupling + flow tracing
         service_diagnostics: Dict[str, Any] = {}
         if method_level:
+            from corbell.core.graph.flow_tracer import FlowTracer
+            from corbell.core.graph.git_coupling import GitCouplingAnalyzer
             from corbell.core.graph.method_graph import MethodGraphBuilder
+
             mgb = MethodGraphBuilder(self.store)
+            coupling_analyzer = GitCouplingAnalyzer()
+            flow_tracer = FlowTracer()
+
             for svc in discovered:
-                result = mgb.build_for_service(svc["id"], svc["repo_path"])
-                service_diagnostics[svc["id"]] = result
+                svc_id = svc["id"]
+                lang = svc.get("language", "python")
+
+                # 4a. Build method-level call graph
+                result = mgb.build_for_service(svc_id, svc["repo_path"])
+                service_diagnostics[svc_id] = result
+
+                # 4b. Git coupling edges (best-effort)
+                try:
+                    coupling_count = coupling_analyzer.build_coupling_edges(
+                        svc_id, svc["repo_path"], self.store
+                    )
+                    service_diagnostics[svc_id]["git_coupling_edges"] = coupling_count
+                except Exception:
+                    pass
+
+                # 4c. Execution flow tracing (best-effort)
+                try:
+                    flows = flow_tracer.trace_flows(
+                        svc_id, self.store,
+                        repo_path=svc["repo_path"],
+                        language=lang,
+                    )
+                    service_diagnostics[svc_id]["flows"] = len(flows)
+                    service_diagnostics[svc_id]["flow_names"] = [
+                        f["flow_name"] for f in flows
+                    ]
+                except Exception:
+                    pass
 
         summary = self.store.get_all_nodes_summary()
         if service_diagnostics:
@@ -224,7 +381,7 @@ class ServiceGraphBuilder:
     def _detect_db_deps(self, svc: Dict, datastore_ids: set) -> None:
         svc_id = svc["id"]
         lang = svc.get("language", "python")
-        patterns = _PYTHON_DB_PATTERNS if lang == "python" else []
+        patterns = _LANG_DB_PATTERNS.get(lang, [])
 
         for fp in svc["files"]:
             content = self._read(fp)
@@ -246,9 +403,12 @@ class ServiceGraphBuilder:
 
     def _detect_queue_deps(self, svc: Dict, queue_ids: set) -> None:
         svc_id = svc["id"]
+        lang = svc.get("language", "python")
+        patterns = _LANG_QUEUE_PATTERNS.get(lang, [])
+
         for fp in svc["files"]:
             content = self._read(fp)
-            for pdef in _PYTHON_QUEUE_PATTERNS:
+            for pdef in patterns:
                 if pdef["pattern"] in content:
                     q_type = pdef["queue_type"]
                     q_id = f"queue:{svc_id}:{q_type}"
@@ -266,26 +426,54 @@ class ServiceGraphBuilder:
 
     def _detect_http_calls(self, svc: Dict, all_service_ids: set) -> None:
         svc_id = svc["id"]
+        lang = svc.get("language", "python")
+        patterns = _LANG_HTTP_PATTERNS.get(lang, [])
+
         for fp in svc["files"]:
             content = self._read(fp)
-            for pdef in _PYTHON_HTTP_PATTERNS:
-                if pdef["pattern"] not in content:
-                    continue
-                # Try to find URLs and match to known services
-                urls = re.findall(r'["\']https?://([^"\']+)["\']', content)
-                for url_host in urls:
-                    for other_id in all_service_ids:
-                        if other_id == svc_id:
-                            continue
-                        # Simple heuristic: service name appears in URL
-                        svc_slug = other_id.replace("-", "").replace("_", "").lower()
-                        url_clean = url_host.replace("-", "").replace("_", "").lower()
-                        if svc_slug in url_clean:
+            has_http_client = any(p["pattern"] in content for p in patterns)
+            if not has_http_client:
+                continue
+
+            # 1. Hard-coded URL matching — service name in URL
+            urls = re.findall(r'["\']https?://([^"\'/:]+)', content)
+            for url_host in urls:
+                for other_id in all_service_ids:
+                    if other_id == svc_id:
+                        continue
+                    svc_slug = other_id.replace("-", "").replace("_", "").lower()
+                    url_clean = url_host.replace("-", "").replace("_", "").lower()
+                    if svc_slug in url_clean:
+                        self.store.upsert_edge(
+                            DependencyEdge(
+                                source_id=svc_id,
+                                target_id=other_id,
+                                kind="http_call",
+                                metadata={"url": url_host, "file": str(fp.name)},
+                            )
+                        )
+
+            # 2. Env-var URL references — log as unresolved external call
+            for env_pat in _ENV_URL_PATTERNS:
+                if env_pat in content:
+                    # Extract env var name that likely contains a URL
+                    env_vars = re.findall(
+                        r'(?:process\.env\.|os\.getenv\(|os\.environ\[|System\.getenv\(|os\.Getenv\()'
+                        r'["\']?([A-Z_][A-Z0-9_]*)["\']?',
+                        content,
+                    )
+                    for var in env_vars:
+                        if any(kw in var for kw in ("URL", "HOST", "ENDPOINT", "BASE", "API")):
                             self.store.upsert_edge(
                                 DependencyEdge(
                                     source_id=svc_id,
-                                    target_id=other_id,
+                                    target_id="external:env_url",
                                     kind="http_call",
-                                    metadata={"url": url_host, "file": str(fp.name)},
+                                    metadata={
+                                        "env_var": var,
+                                        "file": str(fp.name),
+                                        "note": "env-var URL; target unresolved at build time",
+                                    },
                                 )
                             )
+                    break  # one env-var pattern match per file is enough

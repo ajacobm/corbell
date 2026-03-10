@@ -54,6 +54,25 @@ class MethodNode:
     line_start: int
     line_end: int
     service_id: str
+    typed_signature: Optional[str] = None  # e.g. "validate(token: str) -> bool"
+
+
+@dataclass
+class FlowNode:
+    """Represents a named execution flow detected from entry points.
+
+    A flow is a BFS-traversal from an entry point (HTTP handler, CLI command,
+    worker) through the call graph.  It records which methods participate and
+    in which order, enabling Linear tasks to say "step 3 of LoginFlow".
+
+    Node ID format: ``flow::{service_id}::{flow_name}``
+    """
+
+    id: str
+    name: str          # e.g. "LoginFlow"
+    service_id: str
+    entry_method_id: str  # method ID of the detected entry point
+    step_count: int = 0
 
 
 @dataclass
@@ -70,7 +89,7 @@ class GraphStore(ABC):
     """Abstract interface for the architecture graph store."""
 
     @abstractmethod
-    def upsert_node(self, node: ServiceNode | DataStoreNode | QueueNode | MethodNode) -> None:
+    def upsert_node(self, node: ServiceNode | DataStoreNode | QueueNode | MethodNode | FlowNode) -> None:
         """Insert or update a node in the graph."""
         ...
 
@@ -114,6 +133,25 @@ class GraphStore(ABC):
     @abstractmethod
     def get_methods_for_service(self, service_id: str) -> List[MethodNode]:
         """Return all method nodes belonging to a service."""
+        ...
+
+    @abstractmethod
+    def get_callers_of_method(self, method_id: str) -> List[MethodNode]:
+        """Return all MethodNodes that call the given method (reverse call lookup).
+
+        Uses ``method_call`` edges in the store where ``target_id == method_id``.
+        Works for all languages as long as call edges were built by
+        :class:`~corbell.core.graph.method_graph.MethodGraphBuilder`.
+        """
+        ...
+
+    @abstractmethod
+    def get_flows_for_method(self, method_id: str) -> List[Dict[str, Any]]:
+        """Return flows that include the given method as a step.
+
+        Returns a list of dicts with keys ``flow_id``, ``flow_name``,
+        ``step`` (1-based position in the flow), and ``entry_method_id``.
+        """
         ...
 
     @abstractmethod

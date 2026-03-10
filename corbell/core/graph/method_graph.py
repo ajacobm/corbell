@@ -108,6 +108,78 @@ _EXT_LANG = {
     ".java": "java",
 }
 
+# ---------------------------------------------------------------------------
+# Call site node types per language (for extracting function calls)
+# ---------------------------------------------------------------------------
+
+_TS_CALL_SITE_NODES: Dict[str, Set[str]] = {
+    "python":     set(),          # handled by stdlib ast path
+    "javascript": {"call_expression", "new_expression"},
+    "typescript": {"call_expression", "new_expression"},
+    "tsx":        {"call_expression", "new_expression"},
+    "go":         {"call_expression"},
+    "java":       {"method_invocation", "object_creation_expression"},
+}
+
+# ---------------------------------------------------------------------------
+# Builtin blocklist — filter high-noise language builtins from call graph
+# ---------------------------------------------------------------------------
+
+_BUILTIN_BLOCKLIST: Dict[str, Set[str]] = {
+    "python": {
+        "print", "len", "range", "enumerate", "zip", "map", "filter",
+        "sorted", "reversed", "list", "dict", "set", "tuple", "str",
+        "int", "float", "bool", "bytes", "type", "isinstance", "issubclass",
+        "hasattr", "getattr", "setattr", "delattr", "super", "object",
+        "open", "repr", "hash", "id", "hex", "oct", "bin", "abs", "round",
+        "min", "max", "sum", "all", "any", "next", "iter", "vars",
+        "format", "input", "exec", "eval", "compile", "globals", "locals",
+        "staticmethod", "classmethod", "property", "append", "extend",
+        "items", "keys", "values", "get", "update", "pop", "copy", "join",
+        "split", "strip", "replace", "startswith", "endswith", "decode",
+        "encode", "lower", "upper", "format_map",
+    },
+    "javascript": {
+        "console", "log", "error", "warn", "info", "debug", "assert",
+        "setTimeout", "setInterval", "clearTimeout", "clearInterval",
+        "setImmediate", "clearImmediate", "queueMicrotask",
+        "Promise", "resolve", "reject", "then", "catch", "finally", "all",
+        "fetch", "JSON", "parse", "stringify", "Math", "Date", "Array",
+        "Object", "String", "Number", "Boolean", "Symbol", "BigInt",
+        "parseInt", "parseFloat", "isNaN", "isFinite", "encodeURIComponent",
+        "decodeURIComponent", "encodeURI", "decodeURI", "require",
+        "map", "filter", "reduce", "forEach", "find", "findIndex",
+        "push", "pop", "shift", "unshift", "splice", "slice", "join",
+        "toString", "valueOf", "hasOwnProperty", "includes", "indexOf",
+        "addEventListener", "removeEventListener", "emit", "on", "off",
+        "next", "return", "throw", "keys", "values", "entries", "assign",
+        "useState", "useEffect", "useContext", "useRef", "useMemo",
+        "useCallback", "useReducer", "useLayoutEffect", "createContext",
+        "createElement", "render", "it", "describe", "expect", "test",
+        "beforeEach", "afterEach", "beforeAll", "afterAll", "jest",
+    },
+    "go": {
+        "make", "len", "cap", "append", "copy", "delete", "close",
+        "panic", "recover", "print", "println", "new", "real", "imag",
+        "Errorf", "Sprintf", "Printf", "Println", "Fprintf", "Scanf",
+        "Error", "String", "Format", "Marshal", "Unmarshal",
+        "Fatal", "Fatalf", "Log", "Logf",
+    },
+    "java": {
+        "println", "print", "printf", "format", "toString", "hashCode",
+        "equals", "compareTo", "length", "size", "isEmpty", "contains",
+        "add", "get", "put", "remove", "clear", "iterator", "next",
+        "append", "insert", "delete", "substring", "charAt", "indexOf",
+        "parseInt", "parseLong", "parseDouble", "parseFloat",
+        "valueOf", "of", "ofNullable", "orElse", "isPresent", "get",
+        "stream", "collect", "toList", "toMap", "filter", "map",
+        "forEach", "anyMatch", "allMatch", "findFirst",
+    },
+}
+# Add typescript as alias of javascript builtins
+_BUILTIN_BLOCKLIST["typescript"] = _BUILTIN_BLOCKLIST["javascript"]
+_BUILTIN_BLOCKLIST["tsx"] = _BUILTIN_BLOCKLIST["javascript"]
+
 
 # ---------------------------------------------------------------------------
 # Parser cache
@@ -266,7 +338,7 @@ class MethodGraphBuilder:
         lang: str,
         parser: Any,
     ) -> Dict:
-        """Parse *content* with tree-sitter and extract method nodes."""
+        """Parse *content* with tree-sitter and extract method nodes + call sites."""
         methods: List[Dict] = []
         calls: List[Dict] = []
 
@@ -276,18 +348,15 @@ class MethodGraphBuilder:
             return {"methods": [], "calls": []}
 
         target_node_types = _TS_TARGET_NODES.get(lang, set())
+        call_site_types = _TS_CALL_SITE_NODES.get(lang, set())
+        builtins = _BUILTIN_BLOCKLIST.get(lang, set())
         lines = content.splitlines()
-
-        # Walk current class context for Python / Java / TS
-        class_stack: List[str] = []
 
         def _node_name(node) -> Optional[str]:
             """Extract the identifier name from a function/method node."""
-            # Most grammars put the name in a child with field 'name'
             for child in node.children:
                 if child.type == "identifier" and child == node.child_by_field_name("name"):
                     return child.text.decode("utf-8", errors="ignore")
-            # Fallback: first identifier child
             for child in node.children:
                 if child.type == "identifier":
                     return child.text.decode("utf-8", errors="ignore")
@@ -295,7 +364,6 @@ class MethodGraphBuilder:
 
         def _receiver_or_class(node) -> Optional[str]:
             """For Go method_declaration, extract the receiver type name."""
-            # child_by_field_name("receiver") -> parameter_list -> ... type
             recv = node.child_by_field_name("receiver")
             if recv:
                 for sub in recv.children:
@@ -303,7 +371,128 @@ class MethodGraphBuilder:
                         return sub.text.decode("utf-8", errors="ignore").lstrip("*")
             return None
 
-        def traverse(node, enclosing_class: Optional[str] = None, parent=None):
+        def _extract_callee_name(node) -> Optional[str]:
+            """Extract the called function/method name from a call site node."""
+            if lang in ("javascript", "typescript", "tsx"):
+                if node.type == "new_expression":
+                    # new MyClass(...) — get the constructor name
+                    ctor = node.child_by_field_name("constructor")
+                    if ctor and ctor.type == "identifier":
+                        return ctor.text.decode("utf-8", errors="ignore")
+                    return None
+                func = node.child_by_field_name("function")
+                if func is None:
+                    return None
+                if func.type == "identifier":
+                    return func.text.decode("utf-8", errors="ignore")
+                if func.type in ("member_expression", "subscript_expression"):
+                    prop = func.child_by_field_name("property")
+                    if prop:
+                        return prop.text.decode("utf-8", errors="ignore")
+            elif lang == "go":
+                func = node.child_by_field_name("function")
+                if func is None:
+                    return None
+                if func.type == "identifier":
+                    return func.text.decode("utf-8", errors="ignore")
+                if func.type == "selector_expression":
+                    field = func.child_by_field_name("field")
+                    if field:
+                        return field.text.decode("utf-8", errors="ignore")
+            elif lang == "java":
+                if node.type == "object_creation_expression":
+                    type_node = node.child_by_field_name("type")
+                    if type_node:
+                        return type_node.text.decode("utf-8", errors="ignore")
+                    return None
+                name = node.child_by_field_name("name")
+                if name:
+                    return name.text.decode("utf-8", errors="ignore")
+            return None
+
+        def _extract_typed_signature(node) -> str:
+            """Build a typed signature string like ``validate(token: str) -> bool``."""
+            name = _node_name(node) or "?"
+            params_node = node.child_by_field_name("parameters")
+            param_strs: List[str] = []
+
+            if params_node:
+                for param in params_node.named_children:
+                    if lang in ("javascript", "typescript", "tsx"):
+                        pattern = (
+                            param.child_by_field_name("pattern")
+                            or param.child_by_field_name("name")
+                        )
+                        type_ann = param.child_by_field_name("type")
+                        pname = pattern.text.decode("utf-8", "ignore") if pattern else ""
+                        if type_ann:
+                            raw_t = type_ann.text.decode("utf-8", "ignore").strip().lstrip(":").strip()
+                            param_strs.append(f"{pname}: {raw_t}" if pname else raw_t)
+                        elif pname:
+                            param_strs.append(pname)
+
+                    elif lang == "python":
+                        if param.type in (
+                            "typed_parameter", "typed_default_parameter"
+                        ):
+                            pname = ""
+                            ptype = ""
+                            for child in param.children:
+                                if child.type == "identifier" and not pname:
+                                    pname = child.text.decode("utf-8", "ignore")
+                                elif child.type == "type":
+                                    ptype = child.text.decode("utf-8", "ignore")
+                            param_strs.append(f"{pname}: {ptype}" if ptype else pname)
+                        elif param.type in ("identifier", "list_splat_pattern", "dictionary_splat_pattern"):
+                            param_strs.append(param.text.decode("utf-8", "ignore"))
+                        elif param.type == "default_parameter":
+                            n = param.child_by_field_name("name")
+                            if n:
+                                param_strs.append(n.text.decode("utf-8", "ignore"))
+
+                    elif lang == "go":
+                        pnames: List[str] = []
+                        ptype = ""
+                        for child in param.children:
+                            if child.type == "identifier":
+                                pnames.append(child.text.decode("utf-8", "ignore"))
+                            elif child.type in (
+                                "type_identifier", "pointer_type", "qualified_type",
+                                "slice_type", "array_type", "map_type", "interface_type",
+                            ):
+                                ptype = child.text.decode("utf-8", "ignore")
+                        if pnames:
+                            param_strs.append(
+                                f"{' '.join(pnames)} {ptype}".strip() if ptype else " ".join(pnames)
+                            )
+
+                    elif lang == "java":
+                        pname_node = param.child_by_field_name("name")
+                        ptype_node = param.child_by_field_name("type")
+                        if pname_node and ptype_node:
+                            param_strs.append(
+                                f"{ptype_node.text.decode('utf-8','ignore')} "
+                                f"{pname_node.text.decode('utf-8','ignore')}"
+                            )
+
+            params_str = ", ".join(param_strs)
+
+            # Return type
+            ret_node = node.child_by_field_name("return_type")
+            if ret_node:
+                ret_raw = ret_node.text.decode("utf-8", "ignore").strip()
+                # Strip leading ':' (TS) or '->' (Python ts node already has it stripped)
+                ret_clean = ret_raw.lstrip(":->").strip().lstrip(">:").strip()
+                if ret_clean:
+                    return f"{name}({params_str}) -> {ret_clean}"
+            return f"{name}({params_str})"
+
+        def traverse(
+            node,
+            enclosing_class: Optional[str] = None,
+            parent=None,
+            enclosing_method_id: Optional[str] = None,
+        ) -> None:
             # Track class/struct/interface context
             if node.type in {"class_declaration", "class_definition",
                               "struct_type", "type_declaration",
@@ -314,18 +503,25 @@ class MethodGraphBuilder:
                     if name_child else None
                 )
                 for child in node.children:
-                    traverse(child, enclosing_class=cls_name or enclosing_class, parent=node)
+                    traverse(
+                        child,
+                        enclosing_class=cls_name or enclosing_class,
+                        parent=node,
+                        enclosing_method_id=enclosing_method_id,
+                    )
                 return
+
+            current_method_id = enclosing_method_id  # inherited default
 
             if node.type in target_node_types:
                 raw_name = _node_name(node)
 
                 # For Go method_declaration, use receiver type as class
+                eff_class = enclosing_class
                 if lang == "go" and node.type == "method_declaration":
-                    enclosing_class = _receiver_or_class(node) or enclosing_class
+                    eff_class = _receiver_or_class(node) or eff_class
 
-                # Arrow functions and function expressions don't have a name
-                # themselves — get it from the parent variable_declarator
+                # Arrow functions / function expressions without their own name
                 if raw_name is None and node.type in {
                     "arrow_function", "function_expression", "generator_function",
                 }:
@@ -335,15 +531,12 @@ class MethodGraphBuilder:
                             raw_name = name_child.text.decode("utf-8", errors="ignore")
 
                 if raw_name:
-                    full = (
-                        f"{enclosing_class}.{raw_name}"
-                        if enclosing_class else raw_name
-                    )
+                    full = f"{eff_class}.{raw_name}" if eff_class else raw_name
                     mid = self._make_method_id(service_id, fp, full)
                     line_start = node.start_point[0] + 1
                     line_end = node.end_point[0] + 1
 
-                    # Attempt docstring for Python
+                    # Python docstring extraction
                     docstring: Optional[str] = None
                     if lang == "python" and node.children:
                         body = node.child_by_field_name("body")
@@ -356,21 +549,40 @@ class MethodGraphBuilder:
                                         "utf-8", errors="ignore"
                                     ).strip("\"'")
 
+                    typed_sig = _extract_typed_signature(node)
+
                     methods.append({
                         "id": mid,
                         "name": raw_name,
                         "full_name": full,
-                        "class_name": enclosing_class,
+                        "class_name": eff_class,
                         "file_path": str(fp),
                         "line_number": line_start,
                         "line_end": line_end,
-                        "signature": raw_name,
+                        "signature": raw_name,        # plain name (backward compat)
+                        "typed_signature": typed_sig,  # NEW: full typed form
                         "docstring": docstring,
                         "service_id": service_id,
                     })
+                    current_method_id = mid  # children see us as enclosing method
+
+            elif call_site_types and node.type in call_site_types and enclosing_method_id:
+                # Extract call site
+                callee = _extract_callee_name(node)
+                if callee and callee not in builtins:
+                    calls.append({
+                        "caller_id": enclosing_method_id,
+                        "callee_name": callee,
+                        "line_number": node.start_point[0] + 1,
+                    })
 
             for child in node.children:
-                traverse(child, enclosing_class=enclosing_class, parent=node)
+                traverse(
+                    child,
+                    enclosing_class=enclosing_class,
+                    parent=node,
+                    enclosing_method_id=current_method_id,
+                )
 
         traverse(tree.root_node)
         return {"methods": methods, "calls": calls}
