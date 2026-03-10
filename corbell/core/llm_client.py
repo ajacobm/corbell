@@ -531,7 +531,7 @@ class LLMClient:
             "  GCP Vertex:  gcloud auth application-default login\n"
             "               export GCP_PROJECT=my-project GCP_REGION=us-central1\n"
             "\n"
-            "Update corbell/workspace.yaml llm.provider accordingly, then re-run."
+            "Update corbell-data/workspace.yaml llm.provider accordingly, then re-run."
         )
 
 

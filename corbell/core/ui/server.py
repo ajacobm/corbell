@@ -25,7 +25,7 @@ def _find_workspace(start: Optional[Path] = None) -> Optional[Path]:
 
     Priority:
     1. CORBELL_WORKSPACE env var (absolute path to workspace root)
-    2. Walk up from start (or cwd) looking for corbell/workspace.yaml
+    2. Walk up from start (or cwd) looking for corbell-data/workspace.yaml
     """
     import os
     env_root = os.environ.get("CORBELL_WORKSPACE")

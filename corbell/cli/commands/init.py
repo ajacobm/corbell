@@ -18,11 +18,11 @@ def init_cmd(
     ),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing workspace.yaml."),
 ):
-    """Initialize a Corbell workspace. Creates corbell/workspace.yaml."""
+    """Initialize a Corbell workspace. Creates corbell-data/workspace.yaml."""
     from corbell.core.workspace import init_workspace_yaml
 
     target = (directory or Path.cwd()).resolve()
-    ws_file = target / "corbell" / "workspace.yaml"
+    ws_file = target / "corbell-data" / "workspace.yaml"
 
     if ws_file.exists() and not force:
         console.print(
@@ -34,7 +34,7 @@ def init_cmd(
     out = init_workspace_yaml(target)
     console.print(f"[green]✓[/green] Created [bold]{out}[/bold]")
     console.print("\nNext steps:")
-    console.print("  1. Edit [bold]corbell/workspace.yaml[/bold] to add your repos")
+    console.print("  1. Edit [bold]corbell-data/workspace.yaml[/bold] to add your repos")
     console.print("  2. Set [bold]ANTHROPIC_API_KEY[/bold] or [bold]OPENAI_API_KEY[/bold] for LLM generation")
     console.print("  3. Run [bold]corbell graph:build[/bold] to scan your repositories")
     console.print("  4. Run [bold]corbell embeddings:build[/bold] to index code")

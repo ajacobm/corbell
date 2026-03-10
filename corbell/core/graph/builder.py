@@ -214,7 +214,7 @@ _ENV_URL_PATTERNS = [
 ]
 
 _SKIP_DIRS = {
-    ".git", "__pycache__", "node_modules", "venv", "env", ".venv",
+    ".git", "__pycache__", "node_modules", "venv", "env", ".venv", "tests",
     ".pytest_cache", "dist", "build", ".next", ".nuxt", "target", "bin",
     "obj", "coverage", ".tox",
 }

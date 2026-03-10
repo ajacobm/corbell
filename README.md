@@ -76,7 +76,7 @@ cd ~/my-platform   # wherever your repos live
 corbell init
 ```
 
-Edit `corbell/workspace.yaml`:
+Edit `corbell-data/workspace.yaml`:
 
 ```yaml
 workspace:

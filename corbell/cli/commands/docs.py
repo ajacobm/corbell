@@ -19,7 +19,7 @@ def _load(ws_dir: Optional[Path]):
     if root is None:
         console.print("[red]No workspace.yaml found. Run `corbell init` first.[/red]")
         raise typer.Exit(1)
-    config_dir = root / "corbell" if (root / "corbell" / "workspace.yaml").exists() else root
+    config_dir = root / "corbell-data" if (root / "corbell-data" / "workspace.yaml").exists() else root
     cfg = load_workspace(config_dir / "workspace.yaml")
     return cfg, config_dir
 

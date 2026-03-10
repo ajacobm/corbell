@@ -43,7 +43,7 @@ def init(
     directory: str = typer.Option(None, "--dir", "-d", help="Target directory (default: cwd)."),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing workspace.yaml."),
 ):
-    """Initialize a Corbell workspace (creates corbell/workspace.yaml)."""
+    """Initialize a Corbell workspace (creates corbell-data/workspace.yaml)."""
     from pathlib import Path
     from corbell.core.workspace import init_workspace_yaml
 
@@ -60,7 +60,7 @@ def init(
     out = init_workspace_yaml(target)
     console.print(f"[green]✓[/green] Created [bold]{out}[/bold]")
     console.print("\nNext steps:")
-    console.print("  1. Edit [bold]corbell/workspace.yaml[/bold] — add your repo paths")
+    console.print("  1. Edit [bold]corbell-data/workspace.yaml[/bold] — add your repo paths")
     console.print("  2. Set [bold]ANTHROPIC_API_KEY[/bold] or [bold]OPENAI_API_KEY[/bold]")
     console.print("  3. [bold]corbell graph build[/bold]")
     console.print("  4. [bold]corbell embeddings build[/bold]")

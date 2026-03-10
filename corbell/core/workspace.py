@@ -251,18 +251,18 @@ def load_workspace(path: Path | str) -> "WorkspaceConfig":
 
 
 def find_workspace_root(start: Path | str | None = None) -> Optional[Path]:
-    """Walk up directories looking for corbell/workspace.yaml.
+    """Walk up directories looking for corbell-data/workspace.yaml.
 
     Args:
         start: Directory to start searching from (default: cwd).
 
     Returns:
-        Path to the **directory** containing ``corbell/workspace.yaml``, or
+        Path to the **directory** containing ``corbell-data/workspace.yaml``, or
         ``None`` if not found.
     """
     current = Path(start or Path.cwd()).resolve()
     for candidate in [current, *current.parents]:
-        ws = candidate / "corbell" / "workspace.yaml"
+        ws = candidate / "corbell-data" / "workspace.yaml"
         if ws.exists():
             return candidate
         ws2 = candidate / "workspace.yaml"
@@ -272,7 +272,7 @@ def find_workspace_root(start: Path | str | None = None) -> Optional[Path]:
 
 
 def init_workspace_yaml(target_dir: Path) -> Path:
-    """Write a starter workspace.yaml into target_dir/corbell/workspace.yaml.
+    """Write a starter workspace.yaml into target_dir/corbell-data/workspace.yaml.
 
     Args:
         target_dir: Root directory for the new workspace.
@@ -280,7 +280,7 @@ def init_workspace_yaml(target_dir: Path) -> Path:
     Returns:
         Path to the written file.
     """
-    out_dir = target_dir / "corbell"
+    out_dir = target_dir / "corbell-data"
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / "workspace.yaml"
     template = """\
