@@ -402,6 +402,8 @@ def _fetch_mermaid(conn: sqlite3.Connection) -> Dict[str, str]:
 
         if kind == "http_call":
             connections.append(f"  {src} -- HTTP --> {tgt}")
+        elif kind == "rpc_call":
+            connections.append(f"  {src} -- RPC/Edge Function --> {tgt}")
         elif kind == "db_read":
             connections.append(f"  {src} -- Reads --> {tgt}")
         elif kind == "db_write":

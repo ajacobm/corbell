@@ -165,8 +165,8 @@ _LANG_QUEUE_PATTERNS: Dict[str, List] = {
 }
 
 _PYTHON_HTTP_PATTERNS = [
-    {"pattern": "requests.get(", "call_type": "http_call"},
-    {"pattern": "requests.post(", "call_type": "http_call"},
+    {"pattern": "requests.", "call_type": "http_call"},
+    {"pattern": "httpx.", "call_type": "http_call"},
     {"pattern": "httpx.AsyncClient", "call_type": "http_call"},
     {"pattern": "aiohttp.ClientSession", "call_type": "http_call"},
     {"pattern": "urllib.request", "call_type": "http_call"},
@@ -301,7 +301,7 @@ class ServiceGraphBuilder:
         # Phase 3: inter-service HTTP calls (best-effort heuristic)
         all_service_ids = {s["id"] for s in discovered}
         for svc in discovered:
-            self._detect_http_calls(svc, all_service_ids)
+            self._detect_http_calls(svc, discovered)
             self._detect_library_deps(svc, all_service_ids)
 
         # Phase 4: method-level graph + git coupling + flow tracing
@@ -493,8 +493,9 @@ class ServiceGraphBuilder:
                         )
                     )
 
-    def _detect_http_calls(self, svc: Dict, all_service_ids: set) -> None:
+    def _detect_http_calls(self, svc: Dict, all_services: List[Dict]) -> None:
         svc_id = svc["id"]
+        all_service_ids = {s["id"] for s in all_services}
         lang = svc.get("language", "python")
         patterns = _LANG_HTTP_PATTERNS.get(lang, [])
 
@@ -502,7 +503,8 @@ class ServiceGraphBuilder:
             raw_content = self._read(fp)
             stripped_content = self._strip_comments_and_strings(raw_content)
             has_http_client = any(p["pattern"] in stripped_content for p in patterns)
-            if not has_http_client:
+            has_env_url = any(p in raw_content for p in _ENV_URL_PATTERNS)
+            if not has_http_client and not has_env_url:
                 continue
 
             # 1. Hard-coded URL matching — service name in URL
@@ -570,6 +572,40 @@ class ServiceGraphBuilder:
                                         },
                                     )
                                 )
+
+            # 3. Generic RPC/Edge Function Calls (e.g. Supabase Edge Functions)
+            # Matches: call_edge_function("name"), functions.invoke("name")
+            rpc_funcs = re.findall(r'(?:call_edge_function|functions\.invoke)\s*\(\s*["\']([^"\']+)["\']', raw_content)
+            for fn_name in rpc_funcs:
+                mapped_svc_id = None
+                
+                # Scan all other services to see if they host a directory/file matching this RPC name
+                for other_svc in all_services:
+                    if other_svc["id"] == svc_id:
+                        continue
+                    
+                    # Look for clues in the file tree of `other_svc`
+                    for ofp in other_svc.get("files", []):
+                        if fn_name in ofp.parts or ofp.stem == fn_name:
+                            mapped_svc_id = other_svc["id"]
+                            break
+                            
+                    if mapped_svc_id:
+                        break
+                
+                if mapped_svc_id:
+                    self.store.upsert_edge(
+                        DependencyEdge(
+                            source_id=svc_id,
+                            target_id=mapped_svc_id,
+                            kind="rpc_call",
+                            metadata={
+                                "rpc_method": fn_name,
+                                "file": str(fp.name),
+                                "note": "resolved via RPC directory match in target repo",
+                            },
+                        )
+                    )
 
     def _detect_library_deps(self, svc: Dict, all_service_ids: set) -> None:
         """Scan package manifests and imports to detect if one repo relies directly on another logic module/repo."""
