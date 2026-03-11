@@ -2,24 +2,28 @@
 
 from __future__ import annotations
 
+import sys
 import typer
-from rich.console import Console
 
 app = typer.Typer(help="Model Context Protocol (MCP) server integration.")
-console = Console()
 
 
 @app.command("serve")
-def mcp_serve():
-    """Start the Corbell MCP server over stdio.
-    
-    This command is intended to be run by MCP clients (like Claude Desktop or Cursor),
-    not directly by human operators. It provides Corbell's architecture graph and
-    spec generation capabilities as tools to external AI assistants.
+def mcp_serve(
+    transport: str = typer.Option("stdio", "--transport", "-t", help="Transport protocol: stdio or sse"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port for SSE transport (default: 8000)"),
+):
+    """Start the Corbell MCP server.
+
+    Supports two transports:
+      - stdio (default): for IDE integrations like Cursor and Claude Desktop
+      - sse: HTTP server on the specified port for web-based MCP clients
     """
     try:
         from corbell.core.mcp.server import serve
-        serve()
+        serve(transport=transport, port=port)
     except Exception as e:
-        console.print(f"[red]Error starting MCP server: {e}[/red]", err=True)
+        import traceback
+        print(f"Error starting MCP server: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         raise typer.Exit(1)
