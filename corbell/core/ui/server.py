@@ -370,6 +370,84 @@ def _workspace_name(cfg) -> str:
         return "my-platform"
 
 
+def _fetch_mermaid(conn: sqlite3.Connection) -> Dict[str, str]:
+    """Return a single Mermaid file string describing the system boundaries."""
+    rows = conn.execute("SELECT id, node_type, data FROM graph_nodes").fetchall()
+    services, datastores, queues = [], [], []
+
+    for row in rows:
+        ntype = row["node_type"]
+        d = json.loads(row["data"])
+        nid = row["id"].replace("-", "_").replace(".", "_").replace(":", "_")
+        label = d.get("name", row["id"]).replace('"', "'")
+        if ntype == "service":
+            services.append({"id": nid, "label": label})
+        elif ntype == "datastore":
+            datastores.append({"id": nid, "label": label})
+        elif ntype == "queue":
+            queues.append({"id": nid, "label": label})
+
+    edges = conn.execute("SELECT source_id, target_id, kind FROM graph_edges").fetchall()
+    connections = []
+    seen = set()
+    for e in edges:
+        kind = e["kind"]
+        if kind in ("method_call", "flow_step", "git_coupling", "flow_link"):
+            continue
+        src = e["source_id"].replace("-", "_").replace(".", "_").replace(":", "_")
+        tgt = e["target_id"].replace("-", "_").replace(".", "_").replace(":", "_")
+        if (src, tgt, kind) in seen:
+            continue
+        seen.add((src, tgt, kind))
+
+        if kind == "http_call":
+            connections.append(f"  {src} -- HTTP --> {tgt}")
+        elif kind == "db_read":
+            connections.append(f"  {src} -- Reads --> {tgt}")
+        elif kind == "db_write":
+            connections.append(f"  {src} -- Writes --> {tgt}")
+        elif kind == "queue_publish":
+            connections.append(f"  {src} -- Publishes --> {tgt}")
+        elif kind == "queue_consume":
+            connections.append(f"  {src} -- Consumes --> {tgt}")
+        elif kind == "library_dependency":
+            connections.append(f"  {src} -. Import/Library .-> {tgt}")
+        else:
+            connections.append(f"  {src} --> {tgt}")
+
+    lines = ["graph LR"]
+    lines.append("  %% Services")
+    for s in services:
+        lines.append(f'  {s["id"]}["{s["label"]}"]')
+
+    if datastores:
+        lines.append("  %% Data Stores")
+        for d in datastores:
+            lines.append(f'  {d["id"]}[("{d["label"]}")]')
+
+    if queues:
+        lines.append("  %% Queues")
+        for q in queues:
+            lines.append(f'  {q["id"]}>"{q["label"]}"]')
+
+    lines.append("  %% Edges")
+    lines.extend(connections)
+
+    lines.append("  %% Styling")
+    lines.append("  classDef service fill:#161b22,stroke:#39d353,stroke-width:2px,color:#c9d1d9;")
+    lines.append("  classDef datastore fill:#161b22,stroke:#ffa657,stroke-width:2px,color:#c9d1d9;")
+    lines.append("  classDef queue fill:#161b22,stroke:#bc8cff,stroke-width:2px,color:#c9d1d9;")
+
+    for s in services:
+        lines.append(f'  class {s["id"]} service')
+    for d in datastores:
+        lines.append(f'  class {d["id"]} datastore')
+    for q in queues:
+        lines.append(f'  class {q["id"]} queue')
+
+    return {"mermaid": "\n".join(lines)}
+
+
 # ---------------------------------------------------------------------------
 # HTTP Handler
 # ---------------------------------------------------------------------------
@@ -412,6 +490,16 @@ class CorbelUIHandler(BaseHTTPRequestHandler):
             except Exception:
                 ws_name = "workspace"
             self._html(build_page(ws_name))
+            return
+
+        if path == "/architecture":
+            from corbell.core.ui.html import build_arch_page
+            try:
+                cfg, config_dir = _load_cfg(self.ws_yaml)
+                ws_name = _workspace_name(cfg)
+            except Exception:
+                ws_name = "workspace"
+            self._html(build_arch_page(ws_name))
             return
 
         if path == "/api/graph":
@@ -462,6 +550,17 @@ class CorbelUIHandler(BaseHTTPRequestHandler):
                 cfg, config_dir = _load_cfg(self.ws_yaml)
                 conn = _open_db(cfg, config_dir)
                 data = _fetch_flows(conn)
+                conn.close()
+                self._json(data)
+            except Exception as e:
+                self._json({"error": str(e)}, 500)
+            return
+
+        if path == "/api/mermaid":
+            try:
+                cfg, config_dir = _load_cfg(self.ws_yaml)
+                conn = _open_db(cfg, config_dir)
+                data = _fetch_mermaid(conn)
                 conn.close()
                 self._json(data)
             except Exception as e:

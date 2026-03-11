@@ -302,6 +302,7 @@ class ServiceGraphBuilder:
         all_service_ids = {s["id"] for s in discovered}
         for svc in discovered:
             self._detect_http_calls(svc, all_service_ids)
+            self._detect_library_deps(svc, all_service_ids)
 
         # Phase 4: method-level graph + git coupling + flow tracing
         service_diagnostics: Dict[str, Any] = {}
@@ -388,25 +389,75 @@ class ServiceGraphBuilder:
         content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
         return content
 
+    def _extract_db_name(self, content: str, db_type: str) -> Optional[str]:
+        """Try to extract a database name from connection strings."""
+        if db_type == 'sqlite':
+            match = re.search(r'sqlite3\.connect\([\'"]([^\'"]+)[\'"]\)', content)
+            if match: return Path(match.group(1)).name
+        elif db_type == 'chromadb':
+            match = re.search(r'path=[\'"]([^\'"]+)[\'"]', content)
+            if match: return Path(match.group(1)).name
+        elif db_type == 'postgres':
+            match = re.search(r'dbname=([\'"]?)(\w+)\1', content)
+            if match: return match.group(2) if match.lastindex and match.lastindex >= 2 else match.group(1)
+            match = re.search(r'database=([\'"]?)(\w+)\1', content)
+            if match: return match.group(2) if match.lastindex and match.lastindex >= 2 else match.group(1)
+        elif db_type == 'mongodb':
+            match = re.search(r'/(\w+)\?', content)
+            if match: return match.group(1)
+        return None
+
+    def _extract_queue_name(self, content: str, queue_type: str) -> Optional[str]:
+        """Try to extract queue name from common patterns."""
+        patterns = [
+            r'QueueUrl\s*=\s*([\'"])([^\'"]+)\1',
+            r'queue_url\s*=\s*([\'"])([^\'"]+)\1',
+            r'queue_name\s*=\s*([\'"])([^\'"]+)\1',
+            r'queue\s*=\s*([\'"])([^\'"]+)\1',
+            r'https?://sqs\.[^/]+/\d+/([a-zA-Z0-9_-]+)',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, content)
+            if match and match.lastindex is not None:
+                ref = match.group(match.lastindex)
+                return ref.split('/')[-1] if '/' in ref else ref
+        return None
+
+    def _classify_io_direction(self, content: str, conn_idx: int) -> str:
+        """Heuristically determine if the connection is mostly read or write."""
+        # Check a tiny window of text after the connection
+        window = content[conn_idx:conn_idx + 2000].lower()
+        writes = sum(window.count(w) for w in ["insert", "update", ".save", ".create", "publish", "send"])
+        reads = sum(window.count(w) for w in ["select", "find", ".get", "query", "receive", "consume"])
+        return "write" if writes > reads else "read"
+
     def _detect_db_deps(self, svc: Dict, datastore_ids: set) -> None:
         svc_id = svc["id"]
         lang = svc.get("language", "python")
         patterns = _LANG_DB_PATTERNS.get(lang, [])
 
         for fp in svc["files"]:
-            content = self._strip_comments_and_strings(self._read(fp))
+            raw_content = self._read(fp)
+            content = self._strip_comments_and_strings(raw_content)
             for pdef in patterns:
-                if pdef["pattern"] in content:
+                idx = content.find(pdef["pattern"])
+                if idx != -1:
                     db_type = pdef["db_type"]
-                    ds_id = f"datastore:{svc_id}:{db_type}"
+                    # Extract global shared DB name or fall back to globally shared name
+                    db_name_extracted = self._extract_db_name(raw_content, db_type)
+                    db_name = db_name_extracted or f"shared_{db_type}_db"
+                    
+                    ds_id = f"datastore:{db_type}:{db_name}"
                     if ds_id not in datastore_ids:
                         datastore_ids.add(ds_id)
-                        self.store.upsert_node(DataStoreNode(id=ds_id, kind=db_type, name=f"{db_type}-db"))
+                        self.store.upsert_node(DataStoreNode(id=ds_id, kind=db_type, name=db_name))
+                    
+                    direction = self._classify_io_direction(content, idx)
                     self.store.upsert_edge(
                         DependencyEdge(
                             source_id=svc_id,
                             target_id=ds_id,
-                            kind="db_read",
+                            kind=f"db_{direction}",
                             metadata={"file": str(fp.name)},
                         )
                     )
@@ -417,19 +468,27 @@ class ServiceGraphBuilder:
         patterns = _LANG_QUEUE_PATTERNS.get(lang, [])
 
         for fp in svc["files"]:
-            content = self._strip_comments_and_strings(self._read(fp))
+            raw_content = self._read(fp)
+            content = self._strip_comments_and_strings(raw_content)
             for pdef in patterns:
-                if pdef["pattern"] in content:
+                idx = content.find(pdef["pattern"])
+                if idx != -1:
                     q_type = pdef["queue_type"]
-                    q_id = f"queue:{svc_id}:{q_type}"
+                    q_name_extracted = self._extract_queue_name(raw_content, q_type)
+                    q_name = q_name_extracted or f"shared_{q_type}_queue"
+
+                    q_id = f"queue:{q_type}:{q_name}"
                     if q_id not in queue_ids:
                         queue_ids.add(q_id)
-                        self.store.upsert_node(QueueNode(id=q_id, kind=q_type, name=f"{q_type}-queue"))
+                        self.store.upsert_node(QueueNode(id=q_id, kind=q_type, name=q_name))
+                    
+                    direction = self._classify_io_direction(content, idx)
+                    edge_kind = "queue_publish" if direction == "write" else "queue_consume"
                     self.store.upsert_edge(
                         DependencyEdge(
                             source_id=svc_id,
                             target_id=q_id,
-                            kind="queue_publish",
+                            kind=edge_kind,
                             metadata={"file": str(fp.name)},
                         )
                     )
@@ -464,27 +523,102 @@ class ServiceGraphBuilder:
                             )
                         )
 
-            # 2. Env-var URL references — log as unresolved external call
+            # 2. Env-var URL references (Dynamic target resolution)
             for env_pat in _ENV_URL_PATTERNS:
                 if env_pat in raw_content:
-                    # Extract env var name that likely contains a URL
                     env_vars = re.findall(
-                        r'(?:process\.env\.|os\.getenv\(|os\.environ\[|System\.getenv\(|os\.Getenv\()'
+                        r'(?:process\.env\.|os\.getenv\(|os\.environ\[|os\.environ\.get\(|System\.getenv\(|os\.Getenv\(|envvar=)\s*'
                         r'["\']?([A-Z_][A-Z0-9_]*)["\']?',
                         raw_content,
                     )
                     for var in env_vars:
-                        if any(kw in var for kw in ("URL", "HOST", "ENDPOINT", "BASE", "API")):
-                            self.store.upsert_edge(
-                                DependencyEdge(
-                                    source_id=svc_id,
-                                    target_id="external:env_url",
-                                    kind="http_call",
-                                    metadata={
-                                        "env_var": var,
-                                        "file": str(fp.name),
-                                        "note": "env-var URL; target unresolved at build time",
-                                    },
+                        if any(kw in var for kw in ("URL", "HOST", "ENDPOINT", "BASE", "API", "SERVER")):
+                            # Try to aggressively map the env var explicitly to another workspace service
+                            mapped_svc_id = None
+                            clean_var = var.replace("_URL", "").replace("_HOST", "").replace("_API", "").replace("_", "").lower()
+                            
+                            for other_id in all_service_ids:
+                                if other_id == svc_id:
+                                    continue
+                                clean_other = other_id.replace("_", "").replace("-", "").lower()
+                                if clean_other in clean_var or clean_var in clean_other:
+                                    mapped_svc_id = other_id
+                                    break
+                            
+                            if mapped_svc_id:
+                                self.store.upsert_edge(
+                                    DependencyEdge(
+                                        source_id=svc_id,
+                                        target_id=mapped_svc_id,
+                                        kind="http_call",
+                                        metadata={
+                                            "env_var": var,
+                                            "file": str(fp.name),
+                                            "note": "resolved via env-var heuristic name matching",
+                                        },
+                                    )
                                 )
+                            else:
+                                self.store.upsert_edge(
+                                    DependencyEdge(
+                                        source_id=svc_id,
+                                        target_id="external:env_url",
+                                        kind="http_call",
+                                        metadata={
+                                            "env_var": var,
+                                            "file": str(fp.name),
+                                        },
+                                    )
+                                )
+
+    def _detect_library_deps(self, svc: Dict, all_service_ids: set) -> None:
+        """Scan package manifests and imports to detect if one repo relies directly on another logic module/repo."""
+        svc_id = svc["id"]
+        
+        # Build map of lower-case service slugs to service IDs
+        slug_to_id = {}
+        for sid in all_service_ids:
+            if sid != svc_id:
+                slug_to_id[sid.replace("-", "").replace("_", "").lower()] = sid
+                
+        # Also map actual original names and package names (like specgen-local)
+        exact_to_id = {sid: sid for sid in all_service_ids if sid != svc_id}
+        exact_to_id.update({sid.replace("_", "-"): sid for sid in all_service_ids if sid != svc_id})
+        
+        for fp in svc["files"]:
+            name = fp.name
+            
+            # Simple heuristic: scan manifests for matching repo/project names
+            if name in ("package.json", "requirements.txt", "go.mod", "pom.xml", "build.gradle"):
+                content = self._read(fp)
+                for exact_name, target_id in exact_to_id.items():
+                    if f'"{exact_name}"' in content or f"'{exact_name}'" in content or f" {exact_name}==" in content:
+                        self.store.upsert_edge(
+                            DependencyEdge(
+                                source_id=svc_id,
+                                target_id=target_id,
+                                kind="library_dependency",
+                                metadata={"file": name, "note": "manifest dependency"},
                             )
-                    break  # one env-var pattern match per file is enough
+                        )
+                        
+            # Source codes import tracing
+            elif fp.suffix in (".py", ".js", ".ts", ".go", ".java"):
+                content = self._read(fp)
+                
+                # Check for imports containing the slug of another service
+                # (e.g., `import specgen_local` or `require('specgen_local')`)
+                for exact_name, target_id in exact_to_id.items():
+                    import_pattern_py = rf"(?:from|import)\s+{exact_name.replace('-', '_')}"
+                    import_pattern_js = rf"(?:import|require).*{exact_name}"
+                    
+                    if re.search(import_pattern_py, content) or re.search(import_pattern_js, content):
+                        self.store.upsert_edge(
+                            DependencyEdge(
+                                source_id=svc_id,
+                                target_id=target_id,
+                                kind="library_dependency",
+                                metadata={"file": str(fp.name), "note": "source import"},
+                            )
+                        )
+

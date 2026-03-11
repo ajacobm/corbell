@@ -12,6 +12,11 @@ def build_page(workspace_name: str = "my-platform") -> str:
     return _PAGE_HTML.replace("__WS_NAME__", workspace_name)
 
 
+def build_arch_page(workspace_name: str = "my-platform") -> str:
+    """Return the HTML for the Mermaid architecture view."""
+    return _ARCH_HTML.replace("__WS_NAME__", workspace_name)
+
+
 _PAGE_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -197,6 +202,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   <div id="header">
     <span class="logo">🏗️ Corbell</span>
     <span class="ws-name" id="ws-label">__WS_NAME__</span>
+    <div class="nav-tabs" style="margin-left:20px;display:flex;gap:16px;height:100%;align-items:center">
+        <a href="/" style="color:#58a6ff;text-decoration:none;font-size:13px;font-weight:500;">Explorer</a>
+        <a href="/architecture" style="color:#8b949e;text-decoration:none;font-size:13px;font-weight:500;transition:color 0.15s;" onmouseover="this.style.color='#c9d1d9'" onmouseout="this.style.color='#8b949e'">Architecture Review</a>
+    </div>
     <div class="stats" id="header-stats"></div>
   </div>
 
@@ -754,5 +763,67 @@ boot().catch(e=>{
   </div>`;
 });
 </script>
+</body>
+</html>"""
+
+
+_ARCH_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Architecture · __WS_NAME__</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
+
+window.onload = async () => {
+    try {
+        const res = await fetch('/api/mermaid');
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        const container = document.getElementById('mermaid-container');
+        const { svg } = await mermaid.render('mermaid-svg', data.mermaid);
+        container.innerHTML = svg;
+    } catch (err) {
+        document.getElementById('mermaid-container').innerHTML = `<div style="color:#ff7b72;padding:24px;">Failed to load Architecture graph:<br><br>${err.message}</div>`;
+    }
+};
+</script>
+<style>
+/* Reset */
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;color:#c9d1d9;font-family:'Inter',sans-serif;display:flex;flex-direction:column;height:100vh;overflow:hidden;}
+
+/* Header */
+#header{display:flex;align-items:center;gap:12px;padding:0 20px;height:48px;background:#161b22;border-bottom:1px solid #30363d;flex-shrink:0}
+.logo{font-size:18px;font-weight:700;letter-spacing:-0.5px}
+.ws-name{font-size:13px;color:#8b949e;padding:3px 10px;background:#21262d;border-radius:20px;border:1px solid #30363d}
+.nav-tabs{margin-left:20px;display:flex;gap:16px;height:100%;align-items:center}
+.nav-link{color:#8b949e;text-decoration:none;font-size:13px;font-weight:500;transition:color 0.15s;}
+.nav-link:hover{color:#c9d1d9}
+.nav-link.active{color:#58a6ff}
+
+/* Main Canvas */
+#main{flex:1;overflow:auto;padding:24px;display:flex;justify-content:center;align-items:center;background:#0d1117;}
+#mermaid-container{width:100%;height:100%;display:flex;justify-content:center;align-items:center;}
+#mermaid-container svg{max-width:100%;max-height:100%;height:auto}
+</style>
+</head>
+<body>
+  <div id="header">
+    <span class="logo">🏗️ Corbell</span>
+    <span class="ws-name">__WS_NAME__</span>
+    <div class="nav-tabs">
+        <a href="/" class="nav-link">Explorer</a>
+        <a href="/architecture" class="nav-link active">Architecture Review</a>
+    </div>
+  </div>
+  <div id="main">
+    <div id="mermaid-container"><div style="color:#8b949e">Loading Architecture Graph...</div></div>
+  </div>
 </body>
 </html>"""
