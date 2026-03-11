@@ -658,7 +658,7 @@ function drawMiniGraph(methods, edges) {
     });
 }
 
-function showSimpleDetail(id, type) {
+async function showSimpleDetail(id, type) {
   const node = graphData.nodes.find(n=>n.id===id);
   if(!node) return;
   const empty=document.getElementById('detail-empty');
@@ -667,14 +667,45 @@ function showSimpleDetail(id, type) {
   content.style.display='flex';
   const colorMap={datastore:'var(--amber)',queue:'var(--purple)',flow:'var(--pink)'};
   const col=colorMap[type]||'var(--text2)';
+  
+  if (type === 'flow') {
+    const d = await fetch(`/api/flow/${id}`).then(r=>r.json());
+    if(d.error) { content.innerHTML=`<div id="detail-header"><div class="dh-name" style="color:var(--red)">Error</div></div><div style="padding:16px">${d.error}</div>`; return; }
+    
+    content.innerHTML=`
+      <div id="detail-header">
+        <div class="dh-name" style="color:${col}">${htmlEsc(d.name)}</div>
+        <div class="dh-badges"><span class="badge" style="color:${col};border-color:${col}">flow</span></div>
+      </div>
+      <div class="detail-section">
+        <div style="color:var(--text2);font-size:12px;line-height:1.6">Service: <code style="color:var(--teal)">${htmlEsc(d.service_id)}</code></div>
+        <div style="color:var(--text2);font-size:12px;margin-top:6px">${d.methods.length} steps in this flow</div>
+      </div>
+      <div class="detail-section">
+        <h4>Steps <span class="count">${d.methods.length}</span></h4>
+        <div class="method-list">
+          ${d.methods.map(m => {
+            const sig=m.signature||(m.class_name?`${m.class_name}.${m.name}`:`${m.name}`);
+            return `<div class="method-item" title="${htmlEsc(m.id)}">
+              <div style="font-size:10px;color:var(--pink);margin-bottom:2px;font-weight:600">Step ${m.step_index+1}</div>
+              <div class="method-sig">${htmlEsc(sig)}</div>
+              <div class="method-file">${m.file} ${m.line?`:${m.line}`:''}</div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+    `;
+    return;
+  }
+
   content.innerHTML=`
     <div id="detail-header">
-      <div class="dh-name" style="color:${col}">${node.label||node.id}</div>
+      <div class="dh-name" style="color:${col}">${htmlEsc(node.label||node.id)}</div>
       <div class="dh-badges"><span class="badge" style="color:${col};border-color:${col}">${type}${node.kind?' · '+node.kind:''}</span></div>
     </div>
     <div class="detail-section">
-      <div style="color:var(--text2);font-size:12px;line-height:1.6">ID: <code style="color:var(--teal)">${node.id}</code></div>
-      ${node.step_count?`<div style="color:var(--text2);font-size:12px;margin-top:6px">${node.step_count} steps in this flow</div>`:''}</div>
+      <div style="color:var(--text2);font-size:12px;line-height:1.6">ID: <code style="color:var(--teal)">${htmlEsc(node.id)}</code></div>
+    </div>
   `;
 }
 

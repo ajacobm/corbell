@@ -378,13 +378,23 @@ class ServiceGraphBuilder:
         except Exception:
             return ""
 
+    def _strip_comments_and_strings(self, content: str) -> str:
+        import re
+        content = re.sub(r'(?<!\\)"(?:[^"\\]|\\.)*"', '""', content)
+        content = re.sub(r"(?<!\\)'(?:[^'\\]|\\.)*'", "''", content)
+        content = re.sub(r'(?<!\\)`(?:[^`\\]|\\.)*`', '``', content)
+        content = re.sub(r'//.*', '', content)
+        content = re.sub(r'#.*', '', content)
+        content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
+        return content
+
     def _detect_db_deps(self, svc: Dict, datastore_ids: set) -> None:
         svc_id = svc["id"]
         lang = svc.get("language", "python")
         patterns = _LANG_DB_PATTERNS.get(lang, [])
 
         for fp in svc["files"]:
-            content = self._read(fp)
+            content = self._strip_comments_and_strings(self._read(fp))
             for pdef in patterns:
                 if pdef["pattern"] in content:
                     db_type = pdef["db_type"]
@@ -407,7 +417,7 @@ class ServiceGraphBuilder:
         patterns = _LANG_QUEUE_PATTERNS.get(lang, [])
 
         for fp in svc["files"]:
-            content = self._read(fp)
+            content = self._strip_comments_and_strings(self._read(fp))
             for pdef in patterns:
                 if pdef["pattern"] in content:
                     q_type = pdef["queue_type"]
@@ -430,13 +440,14 @@ class ServiceGraphBuilder:
         patterns = _LANG_HTTP_PATTERNS.get(lang, [])
 
         for fp in svc["files"]:
-            content = self._read(fp)
-            has_http_client = any(p["pattern"] in content for p in patterns)
+            raw_content = self._read(fp)
+            stripped_content = self._strip_comments_and_strings(raw_content)
+            has_http_client = any(p["pattern"] in stripped_content for p in patterns)
             if not has_http_client:
                 continue
 
             # 1. Hard-coded URL matching — service name in URL
-            urls = re.findall(r'["\']https?://([^"\'/:]+)', content)
+            urls = re.findall(r'["\']https?://([^"\'/:]+)', raw_content)
             for url_host in urls:
                 for other_id in all_service_ids:
                     if other_id == svc_id:
@@ -455,12 +466,12 @@ class ServiceGraphBuilder:
 
             # 2. Env-var URL references — log as unresolved external call
             for env_pat in _ENV_URL_PATTERNS:
-                if env_pat in content:
+                if env_pat in raw_content:
                     # Extract env var name that likely contains a URL
                     env_vars = re.findall(
                         r'(?:process\.env\.|os\.getenv\(|os\.environ\[|System\.getenv\(|os\.Getenv\()'
                         r'["\']?([A-Z_][A-Z0-9_]*)["\']?',
-                        content,
+                        raw_content,
                     )
                     for var in env_vars:
                         if any(kw in var for kw in ("URL", "HOST", "ENDPOINT", "BASE", "API")):

@@ -35,7 +35,7 @@ def _get_store(cfg, config_dir: Path):
 @app.command("build")
 def graph_build(
     workspace: Optional[Path] = typer.Option(None, "--workspace", "-w", help="Workspace directory."),
-    method_level: bool = typer.Option(True, "--methods", help="Also build method-call graph."),
+    method_level: bool = typer.Option(False, "--methods", help="Also build method-call graph."),
     rebuild: bool = typer.Option(True, "--rebuild/--no-rebuild", help="Clear and rebuild from scratch."),
 ):
     """Scan repos and build the service dependency graph."""

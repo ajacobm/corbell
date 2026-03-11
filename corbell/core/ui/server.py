@@ -322,6 +322,47 @@ def _fetch_flows(conn: sqlite3.Connection) -> List[Dict]:
     return result
 
 
+def _fetch_flow_detail(conn: sqlite3.Connection, flow_id: str) -> Dict[str, Any]:
+    row = conn.execute("SELECT data FROM graph_nodes WHERE id=? AND node_type='flow'", (flow_id,)).fetchone()
+    if not row:
+        return {"error": f"Flow '{flow_id}' not found"}
+    flow_data = json.loads(row["data"])
+
+    # Get methods that belong to this flow.
+    edge_rows = conn.execute(
+        "SELECT target_id, metadata FROM graph_edges WHERE source_id=? AND kind='flow_step'", (flow_id,)
+    ).fetchall()
+    
+    methods = []
+    for er in edge_rows:
+        meta = json.loads(er["metadata"] or "{}")
+        method_id = er["target_id"]
+        step_index = meta.get("step", 0)
+        
+        mr = conn.execute("SELECT data FROM graph_nodes WHERE id=? AND node_type='method'", (method_id,)).fetchone()
+        if mr:
+            d = json.loads(mr["data"])
+            methods.append({
+                "step_index": step_index,
+                "id": method_id,
+                "name": d.get("method_name", ""),
+                "class_name": d.get("class_name"),
+                "signature": d.get("typed_signature") or d.get("signature", ""),
+                "file": Path(d.get("file_path", "")).name,
+                "line": d.get("line_start", 0),
+                "service_id": d.get("service_id", ""),
+            })
+    methods.sort(key=lambda m: m["step_index"])
+    
+    return {
+        "id": flow_id,
+        "name": flow_data.get("name", flow_id),
+        "service_id": flow_data.get("service_id", ""),
+        "step_count": flow_data.get("step_count", 0),
+        "methods": methods,
+    }
+
+
 def _workspace_name(cfg) -> str:
     try:
         return cfg.workspace.name
@@ -402,6 +443,18 @@ class CorbelUIHandler(BaseHTTPRequestHandler):
                 self._json(data)
             except Exception as e:
                 self._json({"error": str(e), "items": []}, 500)
+            return
+
+        if path.startswith("/api/flow/"):
+            flow_id = path[len("/api/flow/"):]
+            try:
+                cfg, config_dir = _load_cfg(self.ws_yaml)
+                conn = _open_db(cfg, config_dir)
+                data = _fetch_flow_detail(conn, flow_id)
+                conn.close()
+                self._json(data)
+            except Exception as e:
+                self._json({"error": str(e)}, 500)
             return
 
         if path == "/api/flows":
