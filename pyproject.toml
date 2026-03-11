@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "corbell"
-version = "0.2.0"
+version = "1.0.0"
 description = "Multi-repo architecture graph, spec generation, and architecture review for backend teams."
 readme = "README.md"
 license = {text = "Apache-2.0"}
