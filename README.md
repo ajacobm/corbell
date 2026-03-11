@@ -208,20 +208,56 @@ init        Create workspace.yaml
 
 ## MCP – Model Context Protocol
 
-The `mcp` command runs the Model Context Protocol server, enabling Corbell to provide context‑aware LLM completions.
+Corbell exposes its architecture graph, code embeddings, and spec tools via MCP, so external AI platforms (Cursor, Claude Desktop, Antigravity) can query your codebase context directly.
+
+### Available Tools
+
+| Tool | Description |
+|---|---|
+| `graph_query` | Query service dependencies, methods, and call paths |
+| `get_architecture_context` | Auto-discover relevant services for a feature description |
+| `code_search` | Semantic search across the code embedding index |
+| `list_services` | List all services in the workspace graph |
+
+### Usage
 
 ```bash
-# Start the MCP server (default host localhost, port 8000)
+# Default: stdio transport (for IDE integrations)
 corbell mcp serve
 
-# Start on a custom port
-corbell mcp serve --port 9000
+# SSE transport (for web-based MCP clients / MCP Inspector)
+corbell mcp serve --transport sse --port 8000
 ```
 
-If your IDE or MCP client (like Cursor or Claude Desktop) overrides the working directory during startup, you can explicitly set the `CORBELL_WORKSPACE` environment variable to the absolute path of your workspace root (the directory containing `corbell/workspace.yaml`):
+### IDE Configuration
+
+**Cursor** (`~/.cursor/mcp.json`):
+```json
+{
+  "mcpServers": {
+    "corbell": {
+      "command": "corbell",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "corbell": {
+      "command": "corbell",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+If your IDE overrides the working directory, set the `CORBELL_WORKSPACE` environment variable:
 
 ```bash
-# Configure this in your IDE's MCP settings
 env CORBELL_WORKSPACE=/path/to/my-platform corbell mcp serve
 ```
 
