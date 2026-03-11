@@ -200,7 +200,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <div id="app">
   <!-- Header -->
   <div id="header">
-    <span class="logo">🏗️ Corbell</span>
+    <span class="logo">Corbell</span>
     <span class="ws-name" id="ws-label">__WS_NAME__</span>
     <div class="nav-tabs" style="margin-left:20px;display:flex;gap:16px;height:100%;align-items:center">
         <a href="/" style="color:#58a6ff;text-decoration:none;font-size:13px;font-weight:500;">Explorer</a>

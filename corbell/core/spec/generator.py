@@ -592,10 +592,52 @@ class SpecGenerator:
         try:
             from corbell.core.embeddings.model import SentenceTransformerModel
             from corbell.core.prd_processor import PRDProcessor
+            from rich.console import Console
+            console = Console()
 
             proc = PRDProcessor(llm_client=self.llm)
+            
+            # Step 1: LLM Semantic Queries
             queries = proc.create_search_queries(prd)
+            
+            console.print(f"\n[bold cyan]1. LLM Semantic Search Queries[/bold cyan] (generated from PRD):")
+            for q in queries:
+                console.print(f"  [dim]→[/dim] {q}")
 
+            # Step 2: Extract keywords and query Graph store for relevant Method names
+            keywords = proc.extract_keywords(prd)
+            console.print(f"\n[bold cyan]2. Graph Store Method Lookup[/bold cyan] (using keywords: {', '.join(keywords[:5])}...)")
+            
+            relevant_methods = []
+            if self.graph:
+                all_methods = []
+                # Fetch methods from relevant services (or all if None)
+                target_services = services if services else [s.id for s in self.graph.get_all_services()]
+                for svc in target_services:
+                    all_methods.extend(self.graph.get_methods_for_service(svc))
+                
+                # Filter methods by keyword match
+                lower_keywords = [k.lower() for k in keywords]
+                for m in all_methods:
+                    m_name = m.method_name.lower()
+                    if any(k in m_name for k in lower_keywords):
+                        relevant_methods.append(m)
+            
+            # Rank and pick top 10 unique method names
+            method_names = list(set(m.method_name for m in relevant_methods))[:10]
+            if method_names:
+                console.print(f"  [dim]Found {len(relevant_methods)} matching methods in graph. Top targets:[/dim]")
+                for mn in method_names[:5]:
+                     console.print(f"  [yellow]ƒ[/yellow] {mn}")
+                
+                # Append method names as specific code queries
+                method_queries = [f"function {mn} implementation source code" for mn in method_names]
+                queries.extend(method_queries)
+            else:
+                console.print("  [dim]No specific method names found in graph matching PRD keywords.[/dim]")
+
+            # Step 3: Execute Embedding Store search
+            console.print(f"\n[bold cyan]3. Embedding Store Retrieval[/bold cyan] (executing {len(queries)} queries)")
             model = SentenceTransformerModel()
             seen_ids: set = set()
             all_code_chunks: list = []
@@ -615,6 +657,11 @@ class SpecGenerator:
                         service_ids=services or None,
                         top_k=per_query_k,
                     )
+                    
+                    if attempt == 0:
+                        # Only log the attempt if it's a semantic query or if we actually found something
+                        if i < len(queries) - len(method_queries) if 'method_queries' in locals() else True:
+                            console.print(f"  [dim]Query {i+1} hits: {len(hits)} raw chunks retrieved[/dim]")
 
                     # Partition into code vs .md
                     for r in hits:
@@ -655,7 +702,12 @@ class SpecGenerator:
                     seen_files[fkey] = True
                     deduped.append(r)
 
-            return deduped[:max_chunks]
+            final_chunks = deduped[:max_chunks]
+            console.print(f"\n[bold green]✓ Embeddings search complete: Selected {len(final_chunks)} exact code chunks for LLM context[/bold green]")
+            for c in final_chunks:
+                console.print(f"  [dim]- {c.file_path} (lines {c.start_line}-{c.end_line}) {':: ' + c.symbol if c.symbol else ''}[/dim]")
+                
+            return final_chunks
 
         except Exception as e:
             print(f"⚠️  Code chunk query failed: {e}")

@@ -102,8 +102,7 @@ llm:
 ### 2. Build the knowledge graph
 
 ```bash
-corbell graph build              # service + dependency graph
-corbell graph build --methods    # + call graph, typed signatures, flows
+corbell graph build --methods    # service + dependency graph + call graph, typed signatures, flows
 corbell embeddings build         # code chunk index for semantic search
 corbell docs scan && corbell docs learn   # extract patterns from existing RFCs/ADRs
 ```
