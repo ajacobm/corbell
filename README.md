@@ -3,8 +3,6 @@
   <h1>Corbell</h1>
   <p><strong>Multi-repo architecture graph, AI-powered spec generation, and architecture review — for backend teams that ship to production.</strong></p>
   <p>
-    <a href="https://pypi.org/project/corbell/"><img src="https://img.shields.io/pypi/v/corbell" alt="PyPI"/></a>
-    <a href="https://pypi.org/project/corbell/"><img src="https://img.shields.io/pypi/pyversions/corbell" alt="Python"/></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"/></a>
     <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"/></a>
   </p>

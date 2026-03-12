@@ -118,7 +118,6 @@ def spec_new(
         • Scaling: "Horizontal scaling only; max 1000 DB connections per replica"
         • Redundancy: "Must survive single AZ failure"
       These constraints are enforced during spec:review.
-      Corbell SaaS adds incident_derived constraints automatically.
     """
     from corbell.core.docs.store import DocPatternStore
     from corbell.core.embeddings.sqlite_store import SQLiteEmbeddingStore

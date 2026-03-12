@@ -367,7 +367,7 @@ class SpecGenerator:
         assert self.llm
 
         constraints_placeholder = (
-            "<!-- Add constraints manually or let Corbell SaaS populate incident_derived. -->\n\n"
+            "<!-- Add constraints manually. -->\n\n"
             "**Manual constraints example** (add your team's real constraints here):\n"
             "- Only deploy to Azure (no AWS services)\n"
             "- All PII must be encrypted at rest and in transit\n"
@@ -488,8 +488,7 @@ class SpecGenerator:
      - Security: "All PII encrypted at rest (AES-256) and in transit (TLS 1.2+)"
      - Latency SLOs: "p99 API response < 200ms"
      - Availability: "Must survive AZ failure (2 of 3 region AZs)"
-     These constraints are surfaced in spec:review and enforced in spec:lint.
-     Corbell SaaS adds incident_derived constraints automatically. -->
+     These constraints are surfaced in spec:review and enforced in spec:lint. -->
 <!-- CORBELL_CONSTRAINTS_END -->
 
 ## Rollout Plan
