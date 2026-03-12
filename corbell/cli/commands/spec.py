@@ -80,22 +80,32 @@ def spec_new(
             "No PRD required. Describes what exists: architecture, key flows, code map."
         ),
     ),
+    full_graph: bool = typer.Option(
+        False, "--full-graph",
+        help=(
+            "Include the FULL method call graph skeletal context in the prompt, "
+            "bypassing keyword filters for graph lookups."
+        ),
+    ),
 ):
     """Generate a technical design document.
 
     Corbell automatically discovers which services are relevant to your PRD —
     no --service flag needed.
 
-    \\b
+    \b
     Modes:
       Spec for new feature:
         corbell spec new --feature "Payment Retry" --prd-file prd.md
+
+      Spec with full call graph context (no keyword filtering):
+        corbell spec new --feature "Auth Flow" --prd-file prd.md --full-graph
 
       Spec for existing codebase (no PRD needed):
         corbell spec new --existing
 
       With existing design docs for pattern context:
-        corbell spec new --feature "Auth Revamp" --prd-file prd.md \\
+        corbell spec new --feature "Auth Revamp" --prd-file prd.md \
           --design-doc docs/auth-design.md --design-doc docs/payment-design.md
 
     \\b
@@ -186,6 +196,7 @@ def spec_new(
         author=author,
         all_service_ids=all_service_ids,
         design_doc_paths=list(design_docs or []),
+        full_graph=full_graph,
     )
 
     console.print(Panel(

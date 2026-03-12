@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from datetime import date
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from corbell.core.docs.learner import DocLearner
 from corbell.core.docs.models import DocPattern
@@ -206,6 +206,7 @@ class SpecGenerator:
         max_code_chunks: int = 15,
         all_service_ids: Optional[List[str]] = None,
         design_doc_paths: Optional[List[Path]] = None,
+        full_graph: bool = False,
     ) -> Path:
         """Generate a technical design document.
 
@@ -258,9 +259,13 @@ class SpecGenerator:
         # Load additional patterns from design doc paths
         extra_patterns = self._load_design_doc_patterns(design_doc_paths or [])
 
-        # Build context blocks
-        graph_context = self._build_graph_context(services)
-        code_context, file_list = self._build_code_context_with_filelist(prd, services, max_code_chunks)
+        # Build graph context
+        graph_context = self._build_graph_context(services, full_graph=full_graph)
+
+        # Build code context (embedding search)
+        code_context, file_list = self._build_code_context_with_filelist(
+            prd, services, max_code_chunks, full_graph=full_graph
+        )
         patterns_context = self._build_patterns_context(prd, extra_patterns)
 
         # Generate body
@@ -504,7 +509,7 @@ class SpecGenerator:
     # Context builders                                                     #
     # ------------------------------------------------------------------ #
 
-    def _build_graph_context(self, services: List[str]) -> str:
+    def _build_graph_context(self, services: List[str], full_graph: bool = False) -> str:
         lines = ["### Service Graph\n"]
         for svc_id in services:
             svc = self.graph.get_service(svc_id)
@@ -515,6 +520,26 @@ class SpecGenerator:
             deps = self.graph.get_dependencies(svc_id)
             for dep in deps:
                 lines.append(f"  → {dep.target_id} [{dep.kind}]")
+            
+            if full_graph:
+                # Include ALL methods and their relationships for this service
+                methods = self.graph.get_methods_for_service(svc_id)
+                if methods:
+                    lines.append("  \n  **Methods & Call Graph:**")
+                    for m in methods:
+                        # Skip test/mock methods even in full graph unless user really wants them
+                        # But for now, let's keep the filter to keep it production-focused
+                        m_name = m.method_name.lower()
+                        if m_name.startswith("test_") or "mock" in m_name:
+                            continue
+                            
+                        lines.append(f"  - `{m.method_name}`: {m.signature}")
+                        # Who calls this method?
+                        callers = self.graph.get_callers_of_method(m.id)
+                        if callers:
+                            caller_names = [f"`{c.method_name}`" for c in callers[:5]]
+                            lines.append(f"    (Called by: {', '.join(caller_names)})")
+
             lines.append("")
 
         all_svcs = self.graph.get_all_services()
@@ -526,10 +551,10 @@ class SpecGenerator:
         return "\n".join(lines)
 
     def _build_code_context_with_filelist(
-        self, prd: str, services: List[str], max_chunks: int
-    ) -> tuple[str, str]:
+        self, prd: str, services: List[str], max_chunks: int, full_graph: bool = False
+    ) -> Tuple[str, str]:
         """Return (code_context_str, file_list_str)."""
-        chunks = self._query_code_chunks(prd, services, max_chunks)
+        chunks = self._query_code_chunks(prd, services, max_chunks, full_graph=full_graph)
         if not chunks:
             return "(no code context found — run `corbell embeddings:build` first)", "(none found)"
 
@@ -556,7 +581,9 @@ class SpecGenerator:
 
         return "\n\n".join(context_parts), file_list
 
-    def _query_code_chunks(self, prd: str, services: List[str], max_chunks: int) -> list:
+    def _query_code_chunks(
+        self, prd: str, services: List[str], max_chunks: int, full_graph: bool = False
+    ) -> List[Any]:
         """Query code chunks using PRDProcessor queries with .md retry logic.
 
         Steps:
@@ -606,7 +633,6 @@ class SpecGenerator:
 
             # Step 2: Extract keywords and query Graph store for relevant Method names
             keywords = proc.extract_keywords(prd)
-            console.print(f"\n[bold cyan]2. Graph Store Method Lookup[/bold cyan] (using keywords: {', '.join(keywords[:5])}...)")
             
             relevant_methods = []
             if self.graph:
@@ -616,21 +642,35 @@ class SpecGenerator:
                 for svc in target_services:
                     all_methods.extend(self.graph.get_methods_for_service(svc))
                 
-                # Filter methods by keyword match
-                lower_keywords = [k.lower() for k in keywords]
-                for m in all_methods:
-                    m_name = m.method_name.lower()
-                    # Final safety: skip test/mock methods
-                    if m_name.startswith("test_") or "mock" in m_name:
-                        continue
-                    if any(k in m_name for k in lower_keywords):
-                        relevant_methods.append(m)
+                if full_graph:
+                    # In full_graph mode, we consider everything (except raw test/mock)
+                    console.print(f"\n[bold green]2. Full Graph Context Enabled[/bold green] (considering {len(all_methods)} methods)")
+                    relevant_methods = [
+                        m for m in all_methods 
+                        if not (m.method_name.lower().startswith("test_") or "mock" in m.method_name.lower())
+                    ]
+                else:
+                    console.print(f"\n[bold cyan]2. Graph Store Method Lookup[/bold cyan] (using keywords: {', '.join(keywords[:5])}...)")
+                    # Filter methods by keyword match
+                    lower_keywords = [k.lower() for k in keywords]
+                    for m in all_methods:
+                        m_name = m.method_name.lower()
+                        # Final safety: skip test/mock methods
+                        if m_name.startswith("test_") or "mock" in m_name:
+                            continue
+                        if any(k in m_name for k in lower_keywords):
+                            relevant_methods.append(m)
             
-            # Rank and pick top 10 unique method names
-            method_names = list(set(m.method_name for m in relevant_methods))[:10]
+            # Rank and pick unique method names
+            method_names = list(set(m.method_name for m in relevant_methods))
+            
+            # Use a larger set for full_graph to broaden the embedding search
+            method_cap = 400 if full_graph else 10
+            method_names = method_names[:method_cap]
+            
             if method_names:
                 console.print(f"  [dim]Found {len(relevant_methods)} matching methods in graph. Top targets:[/dim]")
-                for mn in method_names[:5]:
+                for mn in method_names[:8]:
                      console.print(f"  [yellow]ƒ[/yellow] {mn}")
                 
                 # Append method names as specific code queries
@@ -662,9 +702,8 @@ class SpecGenerator:
                     )
                     
                     if attempt == 0:
-                        # Only log the attempt if it's a semantic query or if we actually found something
-                        if i < len(queries) - len(method_queries) if 'method_queries' in locals() else True:
-                            console.print(f"  [dim]Query {i+1} hits: {len(hits)} raw chunks retrieved[/dim]")
+                        # Log every original query hit to ensure transparency
+                        console.print(f"  [dim]Query {i+1} hits: {len(hits)} raw chunks retrieved[/dim] - [dim italic]'{current_q}'[/dim]")
 
                     # Partition into code vs .md
                     for r in hits:

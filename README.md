@@ -117,6 +117,9 @@ corbell spec new \
   --feature "Payment Retry with Exponential Backoff" \
   --prd-file docs/payment-retry-prd.md
 
+# Spec with full call graph context (bypasses keyword filters for structural map)
+corbell spec new --feature "Auth Flow" --prd-file prd.md --full-graph
+
 # Inline PRD
 corbell spec new --feature "Rate Limiting" --prd "Tier 1: 100 req/min..."
 

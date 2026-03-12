@@ -111,6 +111,7 @@ class PRDProcessor:
 
         for query in queries:
             try:
+                # Log discovery queries if needed (or just track them)
                 qvec = model.encode([query])[0]
                 results = embedding_store.query(qvec, top_k=20)
                 for i, rec in enumerate(results):
