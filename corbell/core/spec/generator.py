@@ -574,7 +574,7 @@ class SpecGenerator:
         ]
         # Path fragments to skip (test files, logging config)
         _SKIP_FRAGMENTS = (
-            "/tests/", "/test_", "_test.", "test_",
+            "/tests/", "/test_", "_test.", "test_", "__tests__", "/mocks/", "/mock_",
             "logging_config", "log_config", "/fixtures/",
         )
 
@@ -620,6 +620,9 @@ class SpecGenerator:
                 lower_keywords = [k.lower() for k in keywords]
                 for m in all_methods:
                     m_name = m.method_name.lower()
+                    # Final safety: skip test/mock methods
+                    if m_name.startswith("test_") or "mock" in m_name:
+                        continue
                     if any(k in m_name for k in lower_keywords):
                         relevant_methods.append(m)
             

@@ -93,7 +93,7 @@ _TS_NAME_FIELDS: Dict[str, List[str]] = {
 }
 
 _SKIP_DIRS = {
-    ".git", "__pycache__", "node_modules", "venv", "env", ".venv",
+    ".git", "__pycache__", "node_modules", "venv", "env", ".venv", "tests", "__tests__",
     ".pytest_cache", "dist", "build", "coverage", ".next", ".nuxt",
     ".svelte-kit", ".cache", "out", "__tests__", ".turbo", ".vercel",
     "storybook-static", ".storybook",
@@ -531,6 +531,11 @@ class MethodGraphBuilder:
                             raw_name = name_child.text.decode("utf-8", errors="ignore")
 
                 if raw_name:
+                    # Skip test and mock methods
+                    lower_name = raw_name.lower()
+                    if lower_name.startswith("test_") or "mock" in lower_name:
+                        return
+
                     full = f"{eff_class}.{raw_name}" if eff_class else raw_name
                     mid = self._make_method_id(service_id, fp, full)
                     line_start = node.start_point[0] + 1
@@ -614,6 +619,11 @@ class MethodGraphBuilder:
 
             def _visit_func(self_inner, node):
                 mname = node.name
+                # Skip test and mock methods
+                lower_name = mname.lower()
+                if lower_name.startswith("test_") or "mock" in lower_name:
+                    return
+
                 full = (
                     f"{self_inner.current_class}.{mname}"
                     if self_inner.current_class else mname
@@ -722,6 +732,11 @@ class MethodGraphBuilder:
                     raw = fp.stem if kind == "default_fn" else None
                 if not raw or raw in KEYWORDS:
                     continue
+                # Skip test and mock methods
+                lower_name = raw.lower()
+                if lower_name.startswith("test_") or "mock" in lower_name:
+                    continue
+
                 full = f"{current_class}.{raw}" if (current_class and kind == "class_method") else raw
                 mid = self._make_method_id(service_id, fp, full)
                 methods.append({
@@ -740,6 +755,11 @@ class MethodGraphBuilder:
             m = pat.match(line)
             if m:
                 mname = m.group(1)
+                # Skip test and mock methods
+                lower_name = mname.lower()
+                if lower_name.startswith("test_") or "mock" in lower_name:
+                    continue
+
                 mid = self._make_method_id(service_id, fp, mname)
                 methods.append({
                     "id": mid, "name": mname, "full_name": mname,
@@ -759,6 +779,11 @@ class MethodGraphBuilder:
             m = pat.search(line)
             if m and m.group(1) not in skip and "class " not in line:
                 mname = m.group(1)
+                # Skip test and mock methods
+                lower_name = mname.lower()
+                if lower_name.startswith("test_") or "mock" in lower_name:
+                    continue
+
                 mid = self._make_method_id(service_id, fp, mname)
                 methods.append({
                     "id": mid, "name": mname, "full_name": mname,
