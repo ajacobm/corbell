@@ -271,7 +271,7 @@ class SpecGenerator:
         # Generate body
         if self.llm and self.llm.is_configured:
             body = self._generate_with_llm(
-                feature, prd, graph_context, code_context, patterns_context, file_list, services
+                feature, prd, graph_context, code_context, patterns_context, file_list, services, full_graph=full_graph
             )
         else:
             body = self._generate_template(feature, prd, graph_context, code_context)
@@ -363,6 +363,7 @@ class SpecGenerator:
         patterns_context: str,
         file_list: str,
         services: List[str],
+        full_graph: bool = False,
     ) -> str:
         assert self.llm
 
@@ -376,11 +377,24 @@ class SpecGenerator:
             "- Rate limit all external API calls to prevent cascade failures"
         )
 
+        full_graph_instructions = ""
+        if full_graph:
+            full_graph_instructions = (
+                "\nIMPORTANT: You have been provided with the FULL method graph skeletal context for these services. "
+                "Analyze the full graph to identify relevant cross-service boundaries and method chains. "
+                "Do NOT include the whole skeletal graph in your final design output. Keep the 'Current Architecture' "
+                "section relevant to the feature request and concise. Use the graph context to ensure your proposed changes "
+                "respect the existing call paths and service boundaries."
+            )
+
         system = _SYSTEM_PROMPT.format(
             title=feature,
             graph_block=graph_context,
             constraints_block=constraints_placeholder,
         )
+        if full_graph:
+            system += full_graph_instructions
+
         code_chunks_count = code_context.count("### ")
         user = _USER_PROMPT_TEMPLATE.format(
             prd=prd[:6000],
@@ -643,11 +657,7 @@ class SpecGenerator:
                 
                 if full_graph:
                     # In full_graph mode, we consider everything (except raw test/mock)
-                    console.print(f"\n[bold green]2. Full Graph Context Enabled[/bold green] (considering {len(all_methods)} methods)")
-                    relevant_methods = [
-                        m for m in all_methods 
-                        if not (m.method_name.lower().startswith("test_") or "mock" in m.method_name.lower())
-                    ]
+                    console.print(f"\n[bold green]2. Full Graph Context Enabled[/bold green], no relevant methods)")
                 else:
                     console.print(f"\n[bold cyan]2. Graph Store Method Lookup[/bold cyan] (using keywords: {', '.join(keywords[:5])}...)")
                     # Filter methods by keyword match
@@ -674,7 +684,12 @@ class SpecGenerator:
                 
                 # Append method names as specific code queries
                 method_queries = [f"function {mn} implementation source code" for mn in method_names]
-                queries.extend(method_queries)
+                
+                # Only use method-derived queries for retrieval if we are NOT in full_graph mode.
+                # In full_graph mode, we already have the structural map and don't want to 
+                # spam the vector store with 400+ specific method lookups.
+                if not full_graph:
+                    queries.extend(method_queries)
             else:
                 console.print("  [dim]No specific method names found in graph matching PRD keywords.[/dim]")
 
