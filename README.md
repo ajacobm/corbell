@@ -23,6 +23,13 @@ When a new engineer joins—or even when you return to a service you haven't tou
 
 ---
 
+## How it looks
+
+<p align="center">
+  <img src="assets/corbell_ui.png" width="48%" alt="Corbell UI" />
+  <img src="assets/mermaid_diagram.png" width="48%" alt="Mermaid Diagram" />
+</p>
+
 ## How it works
 
 ```
@@ -338,6 +345,16 @@ pip install -e ".[dev]"
 pytest tests/ -q
 corbell --help
 ```
+
+---
+
+## Roadmap
+
+We are moving away from hardcoded procedural flows toward a fully **agentic architecture**. Instead of a fixed pipeline, Corbell will treat its core capabilities as dynamic tools:
+
+- **Features as Tools**: Enabling agents to autonomously select when to query the graph, search embeddings, or analyze patterns based on the specific complexity of a feature request.
+- **Dynamic Reasoning**: Moving the orchestration logic into the agentic layer so it can backtrack, refine queries, and cross-reference services without hardcoded sequence constraints.
+- **Agentic Review Flow**: Self-correcting design docs where the agent uses the architecture graph as a real-time validator during the generation process.
 
 ---
 
