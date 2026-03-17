@@ -16,7 +16,7 @@ class ServiceNode:
     repo: str
     language: str = "python"
     tags: List[str] = field(default_factory=list)
-    service_type: str = "api"  # api | worker | cron | cli | service
+    service_type: str = "api"  # api | worker | cron | cli | service | infrastructure
 
 
 @dataclass

@@ -349,10 +349,11 @@ def test_handle_graph_query_returns_error_string_not_exception():
     assert "Error" in result or "error" in result
 
 
-def test_handle_list_services_returns_error_string_not_exception():
+def test_handle_list_services_returns_error_string_not_exception(monkeypatch):
     """Verify list_services returns error string instead of raising."""
     from corbell.core.mcp.tools import handle_list_services
     
+    monkeypatch.setenv("CORBELL_WORKSPACE", "/invalid/path")
     result = handle_list_services()
     assert isinstance(result, str)
     assert "Error" in result or "error" in result

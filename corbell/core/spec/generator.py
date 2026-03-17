@@ -242,6 +242,13 @@ class SpecGenerator:
 
         services = services or []
 
+        # Inject infrastructure services automatically
+        all_svcs = self.graph.get_all_services()
+        for svc in all_svcs:
+            if getattr(svc, "service_type", "service") == "infrastructure" and svc.id not in services:
+                services.append(svc.id)
+                print(f"   Added infrastructure service to context: {svc.id}")
+
         # Build front-matter
         fm = SpecFrontmatter(
             id=slug,
@@ -382,6 +389,7 @@ class SpecGenerator:
             full_graph_instructions = (
                 "\nIMPORTANT: You have been provided with the FULL method graph skeletal context for these services. "
                 "Analyze the full graph to identify relevant cross-service boundaries and method chains. "
+                "For infrastructure services, use the context to deeply understand the deployed infrastructure and cloud resources. "
                 "Do NOT include the whole skeletal graph in your final design output. Keep the 'Current Architecture' "
                 "section relevant to the feature request and concise. Use the graph context to ensure your proposed changes "
                 "respect the existing call paths and service boundaries."
@@ -528,6 +536,8 @@ class SpecGenerator:
             svc = self.graph.get_service(svc_id)
             if svc:
                 lines.append(f"**{svc.name}** (`{svc.id}`, {svc.language}, type: {svc.service_type})")
+                if getattr(svc, "service_type", "service") == "infrastructure":
+                    lines.append("  *(Infrastructure Configuration / CDK Repository)*")
             else:
                 lines.append(f"**{svc_id}** (not yet scanned)")
             deps = self.graph.get_dependencies(svc_id)

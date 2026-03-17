@@ -122,7 +122,7 @@ corbell spec new \
   --feature "Payment Retry with Exponential Backoff" \
   --prd-file docs/payment-retry-prd.md
 
-# Spec with full call graph context (bypasses keyword filters for structural map)
+# Spec with full call graph and infrastructure context
 corbell spec new --feature "Auth Flow" --prd-file prd.md --full-graph
 
 # Inline PRD
@@ -281,7 +281,8 @@ When you run `corbell spec new`, Corbell discovers which services are relevant t
 2. Encodes them with the same `sentence-transformers/all-MiniLM-L6-v2` model used for indexing
 3. Runs similarity search against all indexed code chunks
 4. Ranks services by how many of their chunks appear in the top results
-5. Selects the top-scoring services and builds context from them
+5. Auto-includes any services tagged as `infrastructure` (e.g. AWS CDK repos) to provide comprehensive context
+6. Selects the top-scoring services and builds context from them
 
 Preview what would be discovered without generating a spec:
 
@@ -322,6 +323,7 @@ Corbell runs entirely locally, no cloud required:
 | DB/queue/HTTP dependencies | All 5 | `DataStoreNode`, `QueueNode`, `http_call` |
 | Git change coupling | Any git repo | `git_coupling` edges with strength score |
 | Execution flow traces | All 5 | `FlowNode` + `flow_step` edges |
+| Infrastructure as Code | TS / JS | Auto-tags CDK/Terraform as `infrastructure` |
 
 ---
 

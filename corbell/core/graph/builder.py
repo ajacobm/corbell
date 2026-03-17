@@ -273,12 +273,17 @@ class ServiceGraphBuilder:
             if not repo_path.exists():
                 continue
 
+            # Gather all relevant files first so we can sniff the service type
+            files = list(self._iter_files(repo_path, language))
+            service_type = self._detect_service_type(files, language)
+
             node = ServiceNode(
                 id=svc_id,
                 name=svc_id,
                 repo=str(repo_path),
                 language=language,
                 tags=tags,
+                service_type=service_type,
             )
             self.store.upsert_node(node)
             discovered.append(
@@ -286,7 +291,7 @@ class ServiceGraphBuilder:
                     "id": svc_id,
                     "repo_path": repo_path,
                     "language": language,
-                    "files": list(self._iter_files(repo_path, language)),
+                    "files": files,
                 }
             )
 
@@ -355,12 +360,52 @@ class ServiceGraphBuilder:
     # Internal scanning helpers                                            #
     # ------------------------------------------------------------------ #
 
+    def _detect_service_type(self, files: List[Path], language: str) -> str:
+        """Heuristically detect if a service is an infrastructure repo (CDK, Pulumi, TF, etc.)."""
+        if language in ("typescript", "javascript"):
+            for fp in files:
+                if fp.name == "package.json":
+                    content = self._read(fp)
+                    infra_deps = [
+                        "aws-cdk", "aws-cdk-lib", "@aws-cdk/core", 
+                        "cdktf", "@pulumi/pulumi", "serverless", "sst"
+                    ]
+                    if any(dep in content for dep in infra_deps):
+                        return "infrastructure"
+
+        elif language == "python":
+            for fp in files:
+                if fp.name in ("requirements.txt", "Pipfile", "pyproject.toml"):
+                    content = self._read(fp)
+                    infra_deps = ["aws-cdk-lib", "pulumi", "cdktf"]
+                    if any(dep in content for dep in infra_deps):
+                        return "infrastructure"
+
+        elif language == "go":
+            for fp in files:
+                if fp.name == "go.mod":
+                    content = self._read(fp)
+                    infra_deps = ["github.com/pulumi/pulumi", "github.com/aws/aws-cdk-go", "github.com/hashicorp/terraform-cdk-go"]
+                    if any(dep in content for dep in infra_deps):
+                        return "infrastructure"
+        
+        # If we see terraform files directly, we can safely assume it's infra
+        for fp in files:
+            if fp.suffix in (".tf", ".tfvars"):
+                return "infrastructure"
+        
+        return "service"
+
     def _iter_files(self, repo_path: Path, language: str):
         """Yield all scannable files in a repo."""
+        manifests = {"package.json", "requirements.txt", "go.mod", "pom.xml", "build.gradle"}
         for fp in repo_path.rglob("*"):
             if not fp.is_file():
                 continue
             if self._should_skip(fp):
+                continue
+            if fp.name in manifests:
+                yield fp
                 continue
             if _EXTENSION_LANG.get(fp.suffix) == language or fp.suffix in _EXTENSION_LANG:
                 yield fp
