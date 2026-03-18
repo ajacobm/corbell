@@ -30,6 +30,11 @@ When a new engineer joins—or even when you return to a service you haven't tou
   <img src="assets/mermaid_diagram.png" width="48%" alt="Mermaid Diagram" />
 </p>
 
+## Star History (thank you)
+<p align="center">
+  <img src="assets/star_history.png" width="70%" alt="Corbell Star History" />
+</p>
+
 ## How it works
 
 ```
