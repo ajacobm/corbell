@@ -74,7 +74,45 @@ pip install "corbell[anthropic,openai,notion,linear]"
 
 ---
 
-## Quick start (5 minutes)
+## 🚀 Quick Setup (2 minutes)
+
+### Prerequisites
+- Python 3.8+ or Node.js 16+ or Go 1.19+ (based on your project)
+- Git repository with source code
+
+### Essential Steps
+
+1. **Initialize Corbell workspace**
+   ```bash
+   corbell init
+   ```
+   ✅ Creates `workspace.yaml` in your project root
+
+2. **Generate your first design document**
+   ```bash
+   corbell spec new --prd "Add user authentication feature"
+   ```
+   ✅ Creates design document with auto-discovered services
+
+3. **View architecture graph** (optional)
+   ```bash
+   corbell ui serve
+   ```
+   ✅ Opens browser at http://localhost:7433
+
+### Verify Setup
+- [ ] `workspace.yaml` exists in your project
+- [ ] Design document generated successfully
+- [ ] Architecture graph loads (if using UI)
+
+**Need more details?** See [Full Documentation](#full-documentation) below.
+
+---
+
+## 📖 Full Documentation
+
+<details>
+<summary><strong>Advanced Usage Guide</strong></summary>
 
 ### 1. Initialize a workspace
 
@@ -164,9 +202,10 @@ export CORBELL_LINEAR_API_KEY="lin_api_..."
 corbell export linear specs/payment-retry.tasks.yaml
 ```
 
----
+</details>
 
-## Architecture graph browser
+<details>
+<summary><strong>Architecture graph browser</strong></summary>
 
 ```bash
 corbell ui serve          # opens http://localhost:7433 · Ctrl+C to stop
@@ -180,9 +219,10 @@ An interactive local graph view — no cloud, no sign-in, reads from your existi
 - **Constraints bar** — all `CORBELL_CONSTRAINTS_START` blocks from your spec files shown as persistent amber pills at the bottom. Click to expand.
 - **Sidebar** — filterable service list, stores, queues, flows with search.
 
----
+</details>
 
-## CLI Reference
+<details>
+<summary><strong>CLI Reference</strong></summary>
 
 ```
 graph       Service dependency graph
@@ -215,7 +255,10 @@ mcp         Model Context Protocol server
 init        Create workspace.yaml
 ```
 
-## MCP – Model Context Protocol
+</details>
+
+<details>
+<summary><strong>MCP – Model Context Protocol</strong></summary>
 
 Corbell exposes its architecture graph, code embeddings, and spec tools via MCP, so external AI platforms (Cursor, Claude Desktop, Antigravity) can query your codebase context directly.
 
@@ -270,10 +313,10 @@ If your IDE overrides the working directory, set the `CORBELL_WORKSPACE` environ
 env CORBELL_WORKSPACE=/path/to/my-platform corbell mcp serve
 ```
 
+</details>
 
----
-
-## Auto service discovery
+<details>
+<summary><strong>Auto service discovery</strong></summary>
 
 When you run `corbell spec new`, Corbell discovers which services are relevant to your PRD **automatically** — without you having to specify `--service`:
 
@@ -290,9 +333,10 @@ Preview what would be discovered without generating a spec:
 corbell spec context "Add exponential backoff retry to payment processing"
 ```
 
----
+</details>
 
-## LLM providers
+<details>
+<summary><strong>LLM providers</strong></summary>
 
 | Provider | Models | Key env var |
 |---|---|---|
@@ -303,9 +347,14 @@ corbell spec context "Add exponential backoff retry to payment processing"
 | `azure` | `gpt-4o`, any deployment | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT` |
 | `gcp` | `claude-sonnet-4-5@20250514` | `GOOGLE_APPLICATION_CREDENTIALS` |
 
+</details>
+
 ---
 
-## Architecture
+## Advanced Topics
+
+<details>
+<summary><strong>Architecture Details</strong></summary>
 
 Corbell runs entirely locally, no cloud required:
 
@@ -325,9 +374,10 @@ Corbell runs entirely locally, no cloud required:
 | Execution flow traces | All 5 | `FlowNode` + `flow_step` edges |
 | Infrastructure as Code | TS / JS | Auto-tags CDK/Terraform as `infrastructure` |
 
----
+</details>
 
-## CI integration
+<details>
+<summary><strong>CI integration</strong></summary>
 
 ```yaml
 # .github/workflows/spec-lint.yml
@@ -337,9 +387,10 @@ Corbell runs entirely locally, no cloud required:
     corbell spec lint specs/my-feature.md --ci
 ```
 
----
+</details>
 
-## Development
+<details>
+<summary><strong>Development</strong></summary>
 
 ```bash
 git clone https://github.com/your-org/corbell && cd Corbell
@@ -347,6 +398,8 @@ pip install -e ".[dev]"
 pytest tests/ -q
 corbell --help
 ```
+
+</details>
 
 ---
 
