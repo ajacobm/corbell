@@ -18,6 +18,7 @@ from corbell.core.graph.schema import (
     QueueNode,
     ServiceNode,
 )
+from corbell.core.graph.infra_scanner import InfraScanner
 
 # ---------------------------------------------------------------------------
 # Service pattern detection rules
@@ -295,19 +296,29 @@ class ServiceGraphBuilder:
                 }
             )
 
-        # Phase 2: deps and HTTP calls
+        # Phase 2: deps, HTTP calls, and infra scanning
         datastore_ids: set = set()
         queue_ids: set = set()
+        # infra_resource_ids maps resource node ID → node (DataStoreNode | QueueNode)
+        # populated during infra scanning, consumed by env-var tracing
+        infra_resource_ids: Dict[str, Any] = {}
 
         for svc in discovered:
             self._detect_db_deps(svc, datastore_ids)
             self._detect_queue_deps(svc, queue_ids)
+            # If this service is an infrastructure stack, parse its IaC files
+            node = self.store.get_service(svc["id"])
+            if node and node.service_type == "infrastructure":
+                self._scan_infra_resources(svc, infra_resource_ids)
 
         # Phase 3: inter-service HTTP calls (best-effort heuristic)
         all_service_ids = {s["id"] for s in discovered}
         for svc in discovered:
             self._detect_http_calls(svc, discovered)
             self._detect_library_deps(svc, all_service_ids)
+            # Env-var tracing: link app services to infra resources
+            if infra_resource_ids:
+                self._trace_infra_env_vars(svc, infra_resource_ids)
 
         # Phase 4: method-level graph + git coupling + flow tracing
         service_diagnostics: Dict[str, Any] = {}
@@ -651,6 +662,89 @@ class ServiceGraphBuilder:
                             },
                         )
                     )
+
+    def _scan_infra_resources(
+        self,
+        svc: Dict,
+        infra_resource_ids: Dict[str, Any],
+    ) -> None:
+        """Parse IaC files in an infrastructure repo and upsert resource nodes.
+
+        For each discovered resource a ``provisions`` edge is created from the
+        infrastructure service to the resource node.  The resource is also
+        registered in *infra_resource_ids* so that :meth:`_trace_infra_env_vars`
+        can match application env-vars against it.
+        """
+        svc_id = svc["id"]
+        repo_path = svc["repo_path"]
+        scanner = InfraScanner()
+        resources = scanner.scan(repo_path, svc_id)
+        for resource in resources:
+            self.store.upsert_node(resource)
+            self.store.upsert_edge(
+                DependencyEdge(
+                    source_id=svc_id,
+                    target_id=resource.id,
+                    kind="provisions",
+                    metadata={"infra_svc": svc_id},
+                )
+            )
+            infra_resource_ids[resource.id] = resource
+
+    def _trace_infra_env_vars(
+        self,
+        svc: Dict,
+        infra_resource_ids: Dict[str, Any],
+    ) -> None:
+        """Link an application service to infra resources via env-var naming.
+
+        For every env-var reference in the service's source files that contains
+        a URL/HOST/QUEUE/BUCKET/TABLE/TOPIC keyword, we slugify the var name and
+        compare it against slugified infra resource names.  A match emits a
+        ``uses_infra_resource`` edge from the app service to the resource node.
+        """
+        svc_id = svc["id"]
+
+        # Pre-compute slugs for all known infra resources
+        resource_slugs: List[tuple] = []
+        for res_id, res_node in infra_resource_ids.items():
+            # Extract the resource logical name from the node ID: "datastore:rds:my-db"
+            parts = res_id.split(":")
+            if len(parts) >= 3:
+                name_slug = parts[2].replace("-", "").replace("_", "").lower()
+                resource_slugs.append((name_slug, res_id))
+
+        env_keywords = ("URL", "HOST", "QUEUE", "BUCKET", "TABLE", "TOPIC", "ENDPOINT", "DSN", "URI")
+
+        for fp in svc["files"]:
+            content = self._read(fp)
+            env_vars = re.findall(
+                r'(?:process\.env\.|os\.getenv\(|os\.environ\[|os\.environ\.get\(|System\.getenv\(|os\.Getenv\()'
+                r'\s*["\']?([A-Z_][A-Z0-9_]*)["\']?',
+                content,
+            )
+            for var in env_vars:
+                if not any(kw in var for kw in env_keywords):
+                    continue
+                var_slug = var.replace("_URL", "").replace("_HOST", "").replace("_DSN", "") \
+                              .replace("_URI", "").replace("_ENDPOINT", "").replace("_QUEUE", "") \
+                              .replace("_BUCKET", "").replace("_TABLE", "").replace("_TOPIC", "") \
+                              .replace("_", "").lower()
+                for res_slug, res_id in resource_slugs:
+                    if res_slug and var_slug and (res_slug in var_slug or var_slug in res_slug):
+                        self.store.upsert_edge(
+                            DependencyEdge(
+                                source_id=svc_id,
+                                target_id=res_id,
+                                kind="uses_infra_resource",
+                                metadata={
+                                    "env_var": var,
+                                    "file": str(fp.name),
+                                    "note": "resolved via env-var name match",
+                                },
+                            )
+                        )
+                        break  # one match per env-var is enough
 
     def _detect_library_deps(self, svc: Dict, all_service_ids: set) -> None:
         """Scan package manifests and imports to detect if one repo relies directly on another logic module/repo."""
