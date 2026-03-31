@@ -181,9 +181,11 @@ def test_python_typed_signature_via_ast(tmp_path, tmp_db):
 
     methods = store.get_methods_for_service("svc")
     m = next(m for m in methods if m.method_name == "validate")
-    # stdlib ast path builds signature with parameter names
+    # stdlib ast path builds signature with parameter names;
+    # tree-sitter path puts params in typed_signature instead.
     assert "validate" in m.signature
-    assert "token" in m.signature
+    sig_with_params = m.signature if "token" in m.signature else (m.typed_signature or "")
+    assert "token" in sig_with_params
 
 
 # ---------------------------------------------------------------------------

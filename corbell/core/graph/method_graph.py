@@ -43,6 +43,10 @@ _TS_MODULES: Dict[str, str] = {
     "tsx":        "tree_sitter_typescript",  # same package, different grammar fn
     "go":         "tree_sitter_go",
     "java":       "tree_sitter_java",
+    "csharp":     "tree_sitter_c_sharp",
+    "rust":       "tree_sitter_rust",
+    "ruby":       "tree_sitter_ruby",
+    "php":        "tree_sitter_php",
 }
 
 # Which AST node types to treat as function/method definitions per language
@@ -81,6 +85,22 @@ _TS_TARGET_NODES: Dict[str, Set[str]] = {
         "method_declaration",
         "constructor_declaration",
     },
+    "csharp": {
+        "method_declaration",
+        "constructor_declaration",
+        "local_function_statement",
+    },
+    "rust": {
+        "function_item",
+    },
+    "ruby": {
+        "method",
+        "singleton_method",
+    },
+    "php": {
+        "function_definition",
+        "method_declaration",
+    },
 }
 
 # Child field names that hold the identifier for each language's function node
@@ -90,6 +110,10 @@ _TS_NAME_FIELDS: Dict[str, List[str]] = {
     "typescript": ["name"],
     "go":         ["name"],
     "java":       ["name"],
+    "csharp":     ["name"],
+    "rust":       ["name"],
+    "ruby":       ["name"],
+    "php":        ["name"],
 }
 
 _SKIP_DIRS = {
@@ -106,6 +130,10 @@ _EXT_LANG = {
     ".jsx":  "javascript",
     ".go":   "go",
     ".java": "java",
+    ".cs":   "csharp",
+    ".rs":   "rust",
+    ".rb":   "ruby",
+    ".php":  "php",
 }
 
 # ---------------------------------------------------------------------------
@@ -113,12 +141,16 @@ _EXT_LANG = {
 # ---------------------------------------------------------------------------
 
 _TS_CALL_SITE_NODES: Dict[str, Set[str]] = {
-    "python":     set(),          # handled by stdlib ast path
+    "python":     {"call"},
     "javascript": {"call_expression", "new_expression"},
     "typescript": {"call_expression", "new_expression"},
     "tsx":        {"call_expression", "new_expression"},
     "go":         {"call_expression"},
     "java":       {"method_invocation", "object_creation_expression"},
+    "csharp":     {"invocation_expression", "object_creation_expression"},
+    "rust":       {"call_expression", "macro_invocation"},
+    "ruby":       {"call"},
+    "php":        {"function_call_expression", "member_call_expression", "scoped_call_expression", "object_creation_expression"},
 }
 
 # ---------------------------------------------------------------------------
@@ -175,6 +207,37 @@ _BUILTIN_BLOCKLIST: Dict[str, Set[str]] = {
         "stream", "collect", "toList", "toMap", "filter", "map",
         "forEach", "anyMatch", "allMatch", "findFirst",
     },
+    "csharp": {
+        "WriteLine", "Write", "ToString", "Equals", "GetHashCode", "GetType",
+        "ReferenceEquals", "Parse", "TryParse", "Format", "Join", "Concat",
+        "IsNullOrEmpty", "IsNullOrWhiteSpace", "Select", "Where", "ToList",
+        "ToArray", "FirstOrDefault", "Any", "All", "Count", "Max", "Min",
+        "Sum", "Add", "Remove", "Clear", "Contains", "IndexOf", "Substring",
+    },
+    "rust": {
+        "println", "print", "format", "panic", "unwrap", "expect",
+        "clone", "to_string", "into", "from", "as_ref", "as_mut",
+        "len", "is_empty", "push", "pop", "insert", "remove", "clear",
+        "iter", "iter_mut", "into_iter", "map", "filter", "collect",
+        "any", "all", "find", "Ok", "Err", "Some", "None",
+    },
+    "ruby": {
+        "puts", "print", "p", "printf", "sprintf", "raise", "fail",
+        "require", "require_relative", "include", "extend", "prepend",
+        "to_s", "to_i", "to_f", "to_a", "to_h", "to_sym", "class",
+        "is_a?", "kind_of?", "instance_of?", "respond_to?", "nil?",
+        "empty?", "length", "size", "push", "pop", "shift", "unshift",
+        "map", "select", "reject", "reduce", "inject", "each", "find",
+    },
+    "php": {
+        "echo", "print", "print_r", "var_dump", "var_export", "printf",
+        "sprintf", "die", "exit", "isset", "empty", "unset", "count",
+        "sizeof", "array_push", "array_pop", "array_shift", "array_unshift",
+        "array_map", "array_filter", "array_reduce", "array_keys", "array_values",
+        "in_array", "explode", "implode", "str_replace", "substr", "strlen",
+        "strpos", "strtolower", "strtoupper", "trim", "json_encode", "json_decode",
+        "Exception", "RuntimeException", "InvalidArgumentException",
+    },
 }
 # Add typescript as alias of javascript builtins
 _BUILTIN_BLOCKLIST["typescript"] = _BUILTIN_BLOCKLIST["javascript"]
@@ -207,6 +270,8 @@ def _get_ts_parser(lang: str) -> Optional[Any]:
                 lang_obj = Language(mod.language_tsx())
             elif lang == "typescript" and hasattr(mod, "language_typescript"):
                 lang_obj = Language(mod.language_typescript())
+            elif lang == "php" and hasattr(mod, "language_php"):
+                lang_obj = Language(mod.language_php())
             elif hasattr(mod, "language"):
                 lang_obj = Language(mod.language())
             else:
@@ -278,6 +343,7 @@ class MethodGraphBuilder:
                 line_start=info.get("line_number", 0),
                 line_end=info.get("line_end", info.get("line_number", 0)),
                 service_id=service_id,
+                typed_signature=info.get("typed_signature"),
             )
             self.store.upsert_node(node)
 
@@ -354,9 +420,15 @@ class MethodGraphBuilder:
 
         def _node_name(node) -> Optional[str]:
             """Extract the identifier name from a function/method node."""
+            # 1. Try matching identifier child that is exactly the "name" field
             for child in node.children:
                 if child.type == "identifier" and child == node.child_by_field_name("name"):
                     return child.text.decode("utf-8", errors="ignore")
+            # 2. Try via the "name" field directly (PHP uses node type "name")
+            name_field = node.child_by_field_name("name")
+            if name_field is not None:
+                return name_field.text.decode("utf-8", errors="ignore")
+            # 3. Fall back to first identifier child
             for child in node.children:
                 if child.type == "identifier":
                     return child.text.decode("utf-8", errors="ignore")
@@ -373,7 +445,17 @@ class MethodGraphBuilder:
 
         def _extract_callee_name(node) -> Optional[str]:
             """Extract the called function/method name from a call site node."""
-            if lang in ("javascript", "typescript", "tsx"):
+            if lang == "python":
+                func = node.child_by_field_name("function")
+                if func is None:
+                    return None
+                if func.type == "identifier":
+                    return func.text.decode("utf-8", errors="ignore")
+                if func.type == "attribute":
+                    attr = func.child_by_field_name("attribute")
+                    if attr:
+                        return attr.text.decode("utf-8", errors="ignore")
+            elif lang in ("javascript", "typescript", "tsx"):
                 if node.type == "new_expression":
                     # new MyClass(...) — get the constructor name
                     ctor = node.child_by_field_name("constructor")
@@ -408,6 +490,47 @@ class MethodGraphBuilder:
                 name = node.child_by_field_name("name")
                 if name:
                     return name.text.decode("utf-8", errors="ignore")
+            elif lang == "csharp":
+                if node.type == "object_creation_expression":
+                    t = node.child_by_field_name("type")
+                    if t:
+                        return t.text.decode("utf-8", errors="ignore")
+                    return None
+                func = node.child_by_field_name("function")
+                if func is None:
+                    return None
+                if func.type == "identifier":
+                    return func.text.decode("utf-8", errors="ignore")
+                if func.type == "member_access_expression":
+                    name = func.child_by_field_name("name")
+                    if name:
+                        return name.text.decode("utf-8", errors="ignore")
+            elif lang == "rust":
+                func = node.child_by_field_name("function")
+                if func:
+                    if func.type in ("identifier", "scoped_identifier"):
+                        return func.text.decode("utf-8", errors="ignore")
+                    elif func.type == "field_expression":
+                        field = func.child_by_field_name("field")
+                        if field:
+                            return field.text.decode("utf-8", errors="ignore")
+                elif node.type == "macro_invocation":
+                    mac = node.child_by_field_name("macro")
+                    if mac:
+                        return mac.text.decode("utf-8", errors="ignore")
+            elif lang == "ruby":
+                method = node.child_by_field_name("method")
+                if method:
+                    return method.text.decode("utf-8", errors="ignore")
+            elif lang == "php":
+                if node.type == "object_creation_expression":
+                    cls = node.child_by_field_name("class")
+                    if cls:
+                        return cls.text.decode("utf-8", errors="ignore")
+                    return None
+                name_node = node.child_by_field_name("name")
+                if name_node:
+                    return name_node.text.decode("utf-8", errors="ignore")
             return None
 
         def _extract_typed_signature(node) -> str:
@@ -474,6 +597,42 @@ class MethodGraphBuilder:
                                 f"{ptype_node.text.decode('utf-8','ignore')} "
                                 f"{pname_node.text.decode('utf-8','ignore')}"
                             )
+
+                    elif lang == "csharp":
+                        pname_node = param.child_by_field_name("name")
+                        ptype_node = param.child_by_field_name("type")
+                        if pname_node and ptype_node:
+                            param_strs.append(
+                                f"{ptype_node.text.decode('utf-8','ignore')} "
+                                f"{pname_node.text.decode('utf-8','ignore')}"
+                            )
+                        elif param.type == "parameter":
+                            param_strs.append(param.text.decode("utf-8", "ignore"))
+
+                    elif lang == "rust":
+                        pat = param.child_by_field_name("pattern")
+                        typ = param.child_by_field_name("type")
+                        if pat and typ:
+                            param_strs.append(
+                                f"{pat.text.decode('utf-8','ignore')}: {typ.text.decode('utf-8','ignore')}"
+                            )
+                        else:
+                            param_strs.append(param.text.decode("utf-8", "ignore"))
+
+                    elif lang == "ruby":
+                        if param.type in ("identifier", "keyword_parameter", "optional_parameter"):
+                            param_strs.append(param.text.decode("utf-8", "ignore"))
+
+                    elif lang == "php":
+                        pname_node = param.child_by_field_name("name")
+                        ptype_node = param.child_by_field_name("type")
+                        pstr = ""
+                        if ptype_node:
+                            pstr += ptype_node.text.decode("utf-8", "ignore") + " "
+                        if pname_node:
+                            pstr += pname_node.text.decode("utf-8", "ignore")
+                        if pstr:
+                            param_strs.append(pstr.strip())
 
             params_str = ", ".join(param_strs)
 
@@ -694,6 +853,14 @@ class MethodGraphBuilder:
             return self._regex_go(fp, content, service_id)
         if lang == "java":
             return self._regex_java(fp, content, service_id)
+        if lang == "csharp":
+            return self._regex_csharp(fp, content, service_id)
+        if lang == "rust":
+            return self._regex_rust(fp, content, service_id)
+        if lang == "ruby":
+            return self._regex_ruby(fp, content, service_id)
+        if lang == "php":
+            return self._regex_php(fp, content, service_id)
         return {"methods": [], "calls": []}
 
     # --- JS/TS regex (used only as last-resort fallback) ---
@@ -784,6 +951,85 @@ class MethodGraphBuilder:
                 if lower_name.startswith("test_") or "mock" in lower_name:
                     continue
 
+                mid = self._make_method_id(service_id, fp, mname)
+                methods.append({
+                    "id": mid, "name": mname, "full_name": mname,
+                    "class_name": None, "file_path": str(fp),
+                    "line_number": lnum, "line_end": lnum,
+                    "signature": mname, "docstring": None, "service_id": service_id,
+                })
+        return {"methods": methods, "calls": []}
+
+    def _regex_csharp(self, fp: Path, content: str, service_id: str) -> Dict:
+        methods: List[Dict] = []
+        pat = re.compile(
+            r"(?:public|private|protected|internal|static|async|\s)+[\w<>\[\]]+\s+(\w+)\s*\([^)]*\)\s*\{?"
+        )
+        skip = {"if", "for", "while", "switch", "catch", "class"}
+        for lnum, line in enumerate(content.splitlines(), 1):
+            m = pat.search(line)
+            if m and m.group(1) not in skip and "class " not in line:
+                mname = m.group(1)
+                lower_name = mname.lower()
+                if lower_name.startswith("test") or "mock" in lower_name:
+                    continue
+                mid = self._make_method_id(service_id, fp, mname)
+                methods.append({
+                    "id": mid, "name": mname, "full_name": mname,
+                    "class_name": None, "file_path": str(fp),
+                    "line_number": lnum, "line_end": lnum,
+                    "signature": mname, "docstring": None, "service_id": service_id,
+                })
+        return {"methods": methods, "calls": []}
+
+    def _regex_rust(self, fp: Path, content: str, service_id: str) -> Dict:
+        methods: List[Dict] = []
+        pat = re.compile(r"^\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)\s*\(")
+        for lnum, line in enumerate(content.splitlines(), 1):
+            m = pat.match(line)
+            if m:
+                mname = m.group(1)
+                lower_name = mname.lower()
+                if lower_name.startswith("test") or "mock" in lower_name:
+                    continue
+                mid = self._make_method_id(service_id, fp, mname)
+                methods.append({
+                    "id": mid, "name": mname, "full_name": mname,
+                    "class_name": None, "file_path": str(fp),
+                    "line_number": lnum, "line_end": lnum,
+                    "signature": mname, "docstring": None, "service_id": service_id,
+                })
+        return {"methods": methods, "calls": []}
+
+    def _regex_ruby(self, fp: Path, content: str, service_id: str) -> Dict:
+        methods: List[Dict] = []
+        pat = re.compile(r"^\s*def\s+(?:self\.)?(\w+)")
+        for lnum, line in enumerate(content.splitlines(), 1):
+            m = pat.match(line)
+            if m:
+                mname = m.group(1)
+                lower_name = mname.lower()
+                if lower_name.startswith("test_") or "mock" in lower_name:
+                    continue
+                mid = self._make_method_id(service_id, fp, mname)
+                methods.append({
+                    "id": mid, "name": mname, "full_name": mname,
+                    "class_name": None, "file_path": str(fp),
+                    "line_number": lnum, "line_end": lnum,
+                    "signature": mname, "docstring": None, "service_id": service_id,
+                })
+        return {"methods": methods, "calls": []}
+
+    def _regex_php(self, fp: Path, content: str, service_id: str) -> Dict:
+        methods: List[Dict] = []
+        pat = re.compile(r"^\s*(?:(?:public|private|protected|static|final)\s+)*function\s+(\w+)\s*\(")
+        for lnum, line in enumerate(content.splitlines(), 1):
+            m = pat.match(line)
+            if m:
+                mname = m.group(1)
+                lower_name = mname.lower()
+                if lower_name.startswith("test") or "mock" in lower_name:
+                    continue
                 mid = self._make_method_id(service_id, fp, mname)
                 methods.append({
                     "id": mid, "name": mname, "full_name": mname,

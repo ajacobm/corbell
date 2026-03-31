@@ -135,7 +135,7 @@ workspace:
 services:
   - id: payments-service
     repo: ../payments-service
-    language: python        # python | javascript | typescript | go | java
+    language: python        # python | javascript | typescript | go | java | csharp | rust | ruby | php
 
   - id: auth-service
     repo: ../auth-service
@@ -372,11 +372,11 @@ Corbell runs entirely locally, no cloud required:
 
 | Signal | Languages | Result |
 |---|---|---|
-| Typed method signatures | Python, TS, Go, Java | `MethodNode.typed_signature` |
-| Call edges | All 5 | `method_call` edges |
-| DB/queue/HTTP dependencies | All 5 | `DataStoreNode`, `QueueNode`, `http_call` |
+| Typed method signatures | Python, TS, Go, Java, C#, Rust, Ruby, PHP | `MethodNode.typed_signature` |
+| Call edges | All 9 | `method_call` edges |
+| DB/queue/HTTP dependencies | All 9 | `DataStoreNode`, `QueueNode`, `http_call` |
 | Git change coupling | Any git repo | `git_coupling` edges with strength score |
-| Execution flow traces | All 5 | `FlowNode` + `flow_step` edges |
+| Execution flow traces | All 9 | `FlowNode` + `flow_step` edges |
 | Infrastructure as Code | TS / JS | Auto-tags CDK/Terraform as `infrastructure` |
 
 </details>
