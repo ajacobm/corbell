@@ -79,3 +79,79 @@ def test_db_path_creates_parent(sample_workspace_yaml, tmp_path):
     cfg = load_workspace(sample_workspace_yaml)
     db = cfg.db_path(sample_workspace_yaml.parent)
     assert db.parent.exists()
+
+
+def test_detect_language(tmp_path):
+    from corbell.core.workspace import _detect_language
+
+    # Test typescript
+    ts_dir = tmp_path / "ts-proj"
+    ts_dir.mkdir()
+    (ts_dir / "package.json").touch()
+    assert _detect_language(ts_dir) == "typescript"
+
+    # Test python
+    py_dir = tmp_path / "py-proj"
+    py_dir.mkdir()
+    (py_dir / "requirements.txt").touch()
+    assert _detect_language(py_dir) == "python"
+
+    # Test java
+    java_dir = tmp_path / "java-proj"
+    java_dir.mkdir()
+    (java_dir / "pom.xml").touch()
+    assert _detect_language(java_dir) == "java"
+
+    # Test unknown fallback
+    unk_dir = tmp_path / "unknown-proj"
+    unk_dir.mkdir()
+    assert _detect_language(unk_dir) == "python"
+
+
+def test_detect_services_monorepo(tmp_path):
+    from corbell.core.workspace import _detect_services
+
+    target_dir = tmp_path / "monorepo"
+    target_dir.mkdir()
+    
+    # Not a service dir, just node_modules
+    (target_dir / "node_modules").mkdir()
+    
+    # Service 1
+    s1 = target_dir / "service1"
+    s1.mkdir()
+    (s1 / "package.json").touch()
+
+    # Service 2
+    s2 = target_dir / "api"
+    s2.mkdir()
+    (s2 / "requirements.txt").touch()
+
+    services = _detect_services(target_dir)
+    assert len(services) == 2
+    
+    # Sort them to verify properties predictably
+    services.sort(key=lambda s: s["id"])
+    
+    assert services[0]["id"] == "api"
+    assert services[0]["language"] == "python"
+    assert services[0]["repo"] == "../api"
+
+    assert services[1]["id"] == "service1"
+    assert services[1]["language"] == "typescript"
+    assert services[1]["repo"] == "../service1"
+
+
+def test_detect_services_single_repo(tmp_path):
+    from corbell.core.workspace import _detect_services
+
+    target_dir = tmp_path / "my-api"
+    target_dir.mkdir()
+    (target_dir / "go.mod").touch()
+    (target_dir / ".git").mkdir()
+
+    services = _detect_services(target_dir)
+    assert len(services) == 1
+    assert services[0]["id"] == "my-api"
+    assert services[0]["language"] == "go"
+    assert services[0]["repo"] == ".."

@@ -271,6 +271,73 @@ def find_workspace_root(start: Path | str | None = None) -> Optional[Path]:
     return None
 
 
+def _detect_language(path: Path) -> str:
+    """Detect the most likely language of a project directory based on key files."""
+    if (path / "package.json").exists() or (path / "tsconfig.json").exists():
+        return "typescript"
+    if (path / "requirements.txt").exists() or (path / "pyproject.toml").exists() or (path / "Pipfile").exists() or (path / "setup.py").exists():
+        return "python"
+    if (path / "go.mod").exists():
+        return "go"
+    if (path / "pom.xml").exists() or (path / "build.gradle").exists():
+        return "java"
+    if (path / "Cargo.toml").exists():
+        return "rust"
+    return "python"
+
+
+def _detect_services(target_dir: Path) -> List[Dict[str, Any]]:
+    """Detect services in the target directory (single repo or monorepo subdirectories)."""
+    services = []
+    
+    def is_service_dir(d: Path) -> bool:
+        indicators = [".git", "package.json", "requirements.txt", "pyproject.toml", "go.mod", "pom.xml", "Cargo.toml"]
+        return any((d / i).exists() for i in indicators)
+
+    if is_service_dir(target_dir):
+        sub_services = []
+        for child in target_dir.iterdir():
+            if child.is_dir() and not child.name.startswith(".") and child.name not in ("node_modules", "venv", ".venv", "dist", "build"):
+                if is_service_dir(child):
+                    sub_services.append(child)
+        
+        if len(sub_services) > 0:
+            for child in sub_services:
+                services.append({
+                    "id": child.name,
+                    "repo": f"../{child.name}",
+                    "language": _detect_language(child),
+                    "tags": ["core"]
+                })
+        else:
+            services.append({
+                "id": target_dir.name,
+                "repo": "..",
+                "language": _detect_language(target_dir),
+                "tags": ["core"]
+            })
+    else:
+        for child in target_dir.iterdir():
+            if child.is_dir() and not child.name.startswith(".") and child.name not in ("node_modules", "venv", ".venv", "dist", "build"):
+                if is_service_dir(child):
+                    services.append({
+                        "id": child.name,
+                        "repo": f"../{child.name}",
+                        "language": _detect_language(child),
+                        "tags": ["core"]
+                    })
+    
+    if not services:
+        services.append({
+            "id": "my-service",
+            "repo": "../my-service",
+            "language": "python",
+            "tags": ["core"]
+        })
+        
+    return services
+
+
 def init_workspace_yaml(target_dir: Path) -> Path:
     """Write a starter workspace.yaml into target_dir/corbell-data/workspace.yaml.
 
@@ -283,6 +350,14 @@ def init_workspace_yaml(target_dir: Path) -> Path:
     out_dir = target_dir / "corbell-data"
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / "workspace.yaml"
+    services_detected = _detect_services(target_dir)
+    services_yaml = ""
+    for svc in services_detected:
+        services_yaml += f"  - id: {svc['id']}\n"
+        services_yaml += f"    repo: {svc['repo']}\n"
+        services_yaml += f"    language: {svc['language']}\n"
+        services_yaml += f"    tags: [{', '.join(svc['tags'])}]\n"
+
     template = """\
 version: "1"
 
@@ -291,11 +366,7 @@ workspace:
   root: ".."
 
 services:
-  - id: my-service
-    repo: ../my-service
-    language: python
-    tags: [core]
-
+{services_block}
 existing_docs:
   auto_scan: true
   paths: []
@@ -373,5 +444,5 @@ llm:
   # provider: ollama
   # model: llama3
 """
-    out.write_text(template, encoding="utf-8")
+    out.write_text(template.replace("{services_block}", services_yaml), encoding="utf-8")
     return out
