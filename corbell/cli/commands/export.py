@@ -1,4 +1,4 @@
-"""export: CLI commands — export to Notion and Linear."""
+"""export: CLI commands — export to Notion, Linear, and Jira."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Optional
 import typer
 from rich.console import Console
 
-app = typer.Typer(help="Export spec and tasks to Notion or Linear.")
+app = typer.Typer(help="Export spec and tasks to Notion, Linear, or Jira.")
 console = Console()
 
 
@@ -70,6 +70,34 @@ def export_linear(
         console.print(f"[green]✓ Created {len(created)} Linear issue(s):[/green]")
         for issue in created:
             console.print(f"  {issue.get('identifier', '')} — {issue.get('title', '')} ({issue.get('url', '')})")
+    except (ImportError, ValueError) as e:
+        console.print(f"[red]✗ {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("jira")
+def export_jira(
+    tasks_path: Path = typer.Argument(..., help="Path to the .tasks.yaml file."),
+    workspace: Optional[Path] = typer.Option(None, "--workspace", "-w"),
+):
+    """Create Jira issues from a .tasks.yaml file."""
+    from corbell.core.export.jira import JiraExporter
+
+    cfg, _ = _load(workspace)
+    jira = cfg.integrations.jira
+    exporter = JiraExporter(
+        url=jira.url,
+        email=jira.email,
+        api_token=jira.api_token,
+        project_key=jira.project_key,
+        issue_type=jira.issue_type,
+    )
+
+    try:
+        created = exporter.export_tasks(tasks_path)
+        console.print(f"[green]✓ Created {len(created)} Jira issue(s):[/green]")
+        for issue in created:
+            console.print(f"  {issue.get('issue_key', '')} — {issue.get('title', '')} ({issue.get('url', '')})")
     except (ImportError, ValueError) as e:
         console.print(f"[red]✗ {e}[/red]")
         raise typer.Exit(1)

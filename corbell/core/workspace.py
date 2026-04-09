@@ -89,11 +89,24 @@ class LinearIntegration(BaseModel):
     model_config = {"extra": "ignore"}
 
 
+class JiraIntegration(BaseModel):
+    """Jira integration config."""
+
+    url: Optional[str] = None
+    email: Optional[str] = None
+    api_token: Optional[str] = None
+    project_key: Optional[str] = None
+    issue_type: str = "Task"
+
+    model_config = {"extra": "ignore"}
+
+
 class IntegrationsConfig(BaseModel):
     """External integrations."""
 
     notion: NotionIntegration = Field(default_factory=NotionIntegration)
     linear: LinearIntegration = Field(default_factory=LinearIntegration)
+    jira: JiraIntegration = Field(default_factory=JiraIntegration)
 
     model_config = {"extra": "ignore"}
 
@@ -208,11 +221,15 @@ class WorkspaceConfig(BaseModel):
 
 
 def _expand_env(value: Any) -> Any:
-    """Recursively expand ${VAR} references in dict/list/str values."""
+    """Recursively expand ${VAR} references in dict/list/str values.
+
+    - ``${VAR}``  → value of env var VAR, or None if not set
+    - Any other string → used as-is (literal value)
+    """
     if isinstance(value, str):
         if value.startswith("${") and value.endswith("}"):
             var = value[2:-1]
-            return os.environ.get(var, value)
+            return os.environ.get(var, None)  # None when env var is not set
         return value
     if isinstance(value, dict):
         return {k: _expand_env(v) for k, v in value.items()}
@@ -398,6 +415,12 @@ integrations:
     api_key: ${CORBELL_LINEAR_API_KEY}
     team_id: ${CORBELL_LINEAR_TEAM_ID}
     default_project_id: ${CORBELL_LINEAR_PROJECT_ID}
+  jira:
+    url: ${CORBELL_JIRA_URL}
+    email: ${CORBELL_JIRA_EMAIL}
+    api_token: ${CORBELL_JIRA_API_TOKEN}
+    project_key: ${CORBELL_JIRA_PROJECT_KEY}
+    issue_type: Task
 
 llm:
   # ---- Option 1: Anthropic (recommended) ----

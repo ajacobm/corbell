@@ -209,6 +209,7 @@ __marimo__/
 workspace.yaml
 # Corbell Specific
 corbell/workspace.yaml
+corbell-data/
 *.review.md
 specs/
 specs/*.tasks.yaml
