@@ -100,7 +100,7 @@ class JiraExporter:
                     data=json.dumps(payload),
                     timeout=30,
                 )
-                resp.raise_for_status()
+                self._raise_for_status(resp)
                 result = resp.json()
 
                 issue_key = result.get("key", "")
@@ -133,6 +133,20 @@ class JiraExporter:
                 f"Jira credentials not configured: {', '.join(missing)}.\n"
                 "Set env vars or add 'integrations.jira.*' to workspace.yaml."
             )
+
+    def _raise_for_status(self, resp: Any) -> None:
+        """Raise ValueError with a clean Jira error message on 4xx/5xx."""
+        if resp.status_code < 400:
+            return
+        try:
+            body = resp.json()
+            messages = body.get("errorMessages", [])
+            errors = body.get("errors", {})
+            parts = list(messages) + [f"{k}: {v}" for k, v in errors.items()]
+            detail = "; ".join(parts) if parts else resp.text[:300]
+        except Exception:
+            detail = resp.text[:300]
+        raise ValueError(f"Jira API {resp.status_code}: {detail}")
 
     def _auth_headers(self) -> Dict[str, str]:
         token = base64.b64encode(f"{self.email}:{self.api_token}".encode()).decode()

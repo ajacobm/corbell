@@ -224,12 +224,21 @@ def _expand_env(value: Any) -> Any:
     """Recursively expand ${VAR} references in dict/list/str values.
 
     - ``${VAR}``  → value of env var VAR, or None if not set
+                    (a warning is emitted when the var is missing)
     - Any other string → used as-is (literal value)
     """
     if isinstance(value, str):
         if value.startswith("${") and value.endswith("}"):
             var = value[2:-1]
-            return os.environ.get(var, None)  # None when env var is not set
+            resolved = os.environ.get(var)
+            if resolved is None:
+                import warnings
+                warnings.warn(
+                    f"Environment variable '{var}' is referenced in workspace.yaml but is not set.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            return resolved
         return value
     if isinstance(value, dict):
         return {k: _expand_env(v) for k, v in value.items()}

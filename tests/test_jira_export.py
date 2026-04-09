@@ -1,4 +1,4 @@
-"""Tests for the Jira exporter."""
+"""Tests for the Jira exporter and CLI command."""
 
 from __future__ import annotations
 
@@ -80,6 +80,7 @@ def tasks_yaml_no_files(tmp_path) -> Path:
 
 def _mock_response(key: str = "ENG-1") -> MagicMock:
     resp = MagicMock()
+    resp.status_code = 201
     resp.json.return_value = {"key": key, "id": "10001"}
     resp.raise_for_status.return_value = None
     return resp
@@ -347,3 +348,142 @@ integrations:
     assert jira.api_token == "secret-token"
     assert jira.project_key == "ACME"
     assert jira.issue_type == "Story"
+
+
+# ─── Jira API error handling ──────────────────────────────────────────────────
+
+def test_raise_for_status_surfaces_jira_error_messages():
+    exporter = JiraExporter(**VALID_CREDS)
+    resp = MagicMock()
+    resp.status_code = 400
+    resp.json.return_value = {
+        "errorMessages": ["Project 'XYZ' does not exist."],
+        "errors": {},
+    }
+    with pytest.raises(ValueError, match="Project 'XYZ' does not exist"):
+        exporter._raise_for_status(resp)
+
+
+def test_raise_for_status_surfaces_field_errors():
+    exporter = JiraExporter(**VALID_CREDS)
+    resp = MagicMock()
+    resp.status_code = 400
+    resp.json.return_value = {
+        "errorMessages": [],
+        "errors": {"issuetype": "Issue type is required."},
+    }
+    with pytest.raises(ValueError, match="issuetype"):
+        exporter._raise_for_status(resp)
+
+
+def test_raise_for_status_401_fallback_to_text():
+    exporter = JiraExporter(**VALID_CREDS)
+    resp = MagicMock()
+    resp.status_code = 401
+    resp.json.side_effect = Exception("not json")
+    resp.text = "Unauthorized"
+    with pytest.raises(ValueError, match="401"):
+        exporter._raise_for_status(resp)
+
+
+def test_raise_for_status_2xx_does_not_raise():
+    exporter = JiraExporter(**VALID_CREDS)
+    resp = MagicMock()
+    resp.status_code = 201
+    exporter._raise_for_status(resp)  # should not raise
+
+
+def test_export_tasks_surfaces_jira_error(tasks_yaml):
+    """HTTPError from Jira should surface as a clean ValueError, not a traceback."""
+    exporter = JiraExporter(**VALID_CREDS)
+
+    bad_resp = MagicMock()
+    bad_resp.status_code = 400
+    bad_resp.json.return_value = {"errorMessages": ["Issue type 'Task' not found."], "errors": {}}
+
+    with patch("requests.Session.post", return_value=bad_resp):
+        with pytest.raises(ValueError, match="Issue type 'Task' not found"):
+            exporter.export_tasks(tasks_yaml)
+
+
+# ─── CLI command ──────────────────────────────────────────────────────────────
+
+def test_cli_export_jira_reads_config_from_workspace(tmp_path, tasks_yaml):
+    """CLI `export jira` must pass workspace.yaml values to JiraExporter."""
+    from typer.testing import CliRunner
+    from corbell.cli.commands.export import app
+
+    # Create a minimal workspace with Jira config
+    ws_dir = tmp_path / "corbell-data"
+    ws_dir.mkdir()
+    (ws_dir / "workspace.yaml").write_text(
+        """\
+version: "1"
+integrations:
+  jira:
+    url: https://test.atlassian.net
+    email: test@test.com
+    api_token: test-token
+    project_key: TEST
+    issue_type: Task
+""",
+        encoding="utf-8",
+    )
+
+    captured = {}
+
+    def fake_export(self, path):
+        captured["url"] = self.url
+        captured["email"] = self.email
+        captured["api_token"] = self.api_token
+        captured["project_key"] = self.project_key
+        return [{"issue_key": "TEST-1", "title": "t", "url": "u"}]
+
+    runner = CliRunner()
+    with patch("corbell.core.export.jira.JiraExporter.export_tasks", fake_export):
+        result = runner.invoke(
+            app,
+            ["jira", str(tasks_yaml), "--workspace", str(tmp_path)],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert captured["url"] == "https://test.atlassian.net"
+    assert captured["email"] == "test@test.com"
+    assert captured["api_token"] == "test-token"
+    assert captured["project_key"] == "TEST"
+
+
+def test_cli_export_jira_shows_clean_error_on_bad_credentials(tmp_path, tasks_yaml):
+    """CLI must show a clean error message, not a Python traceback."""
+    from typer.testing import CliRunner
+    from corbell.cli.commands.export import app
+
+    ws_dir = tmp_path / "corbell-data"
+    ws_dir.mkdir()
+    (ws_dir / "workspace.yaml").write_text(
+        """\
+version: "1"
+integrations:
+  jira:
+    url: https://test.atlassian.net
+    email: test@test.com
+    api_token: bad-token
+    project_key: TEST
+    issue_type: Task
+""",
+        encoding="utf-8",
+    )
+
+    def fake_export(self, path):
+        raise ValueError("Jira API 401: Unauthorized")
+
+    runner = CliRunner()
+    with patch("corbell.core.export.jira.JiraExporter.export_tasks", fake_export):
+        result = runner.invoke(
+            app,
+            ["jira", str(tasks_yaml), "--workspace", str(tmp_path)],
+        )
+
+    assert result.exit_code == 1
+    assert "Jira API 401" in result.output
+    assert "Traceback" not in result.output
