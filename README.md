@@ -53,6 +53,7 @@ Your docs  → [docs:scan]   → Design pattern extraction
   [spec review]    → Checks claims against graph → .review.md
   [spec decompose] → Parallel task tracks YAML
   [export linear]  → Linear issues with full method/service context
+  [export jira]    → Jira issues via REST API v3 (reads from workspace.yaml)
 ```
 
 No servers. No cloud setup. Runs entirely from your laptop against local repos.
@@ -69,10 +70,10 @@ pip install "corbell[anthropic]"    # Claude (recommended)
 pip install "corbell[openai]"       # GPT-4o
 
 # With exports:
-pip install "corbell[notion,linear]"
+pip install "corbell[notion,linear,jira]"
 
 # Everything:
-pip install "corbell[anthropic,openai,notion,linear]"
+pip install "corbell[anthropic,openai,notion,linear,jira]"
 ```
 
 **Requirements**: Python ≥ 3.11
@@ -142,9 +143,20 @@ services:
     language: go
 
 llm:
-  provider: anthropic   # or: openai, ollama
+  provider: anthropic   # or: openai, ollama, aws, azure, gcp
   model: claude-sonnet-4-5-20250929
   api_key: ${ANTHROPIC_API_KEY}
+
+integrations:
+  jira:
+    url: https://yourcompany.atlassian.net
+    email: you@yourcompany.com
+    api_token: ${CORBELL_JIRA_API_TOKEN}   # or paste directly
+    project_key: ENG
+    issue_type: Task                        # Task | Story | Bug
+  linear:
+    api_key: ${CORBELL_LINEAR_API_KEY}
+    team_id: ${CORBELL_LINEAR_TEAM_ID}
 ```
 
 ### 2. Build the knowledge graph
@@ -203,8 +215,12 @@ corbell spec approve specs/payment-retry.md
 
 corbell spec decompose specs/payment-retry.md  # → .tasks.yaml
 
+# Export to Linear
 export CORBELL_LINEAR_API_KEY="lin_api_..."
 corbell export linear specs/payment-retry.tasks.yaml
+
+# Export to Jira (credentials in workspace.yaml)
+corbell export jira specs/payment-retry.tasks.yaml
 ```
 
 </details>
@@ -249,7 +265,7 @@ spec        Design spec lifecycle
   review      Check spec vs graph → .review.md
   approve / decompose / context
 
-export      notion | linear
+export      notion | linear | jira
 
 ui          Architecture graph browser
   serve       --port (default 7433) --no-browser
