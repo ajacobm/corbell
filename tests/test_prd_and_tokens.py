@@ -166,3 +166,157 @@ class TestTokenUsageTracker:
         tracker.record("test", "some-new-model-x", 1000, 500)
         assert tracker.call_count == 1
         assert tracker.total_tokens == 1500
+
+
+# ─── Context Pruner tests ─────────────────────────────────────────────────
+
+from corbell.core.token_tracker import (
+    ContextPruner,
+    ContextSection,
+    PruneResult,
+    estimate_tokens,
+    _truncate_to_tokens,
+    _CHARS_PER_TOKEN,
+)
+
+
+class TestEstimateTokens:
+    def test_empty_string(self):
+        assert estimate_tokens("") == 0
+
+    def test_short_string(self):
+        # 12 chars / 4.0 = 3.0 → ceil → 3
+        assert estimate_tokens("hello world!") == 3
+
+    def test_consistent_with_char_ratio(self):
+        text = "a" * 400
+        expected = 400 / _CHARS_PER_TOKEN
+        result = estimate_tokens(text)
+        assert result == 100  # 400 / 4.0
+
+    def test_rounds_up(self):
+        # 5 chars / 4.0 = 1.25 → ceil → 2
+        assert estimate_tokens("abcde") == 2
+
+
+class TestTruncateToTokens:
+    def test_no_truncation_when_under_budget(self):
+        text = "line one\nline two\nline three"
+        result = _truncate_to_tokens(text, 1000)
+        assert result == text
+
+    def test_truncation_adds_marker(self):
+        text = "x" * 8000
+        result = _truncate_to_tokens(text, 100)
+        assert "truncated" in result
+        assert len(result) < len(text)
+
+    def test_truncation_respects_line_boundary(self):
+        lines = [f"line {i}: some content here" for i in range(200)]
+        text = "\n".join(lines)
+        result = _truncate_to_tokens(text, 50)
+        # Result should end at a line boundary, not mid-line
+        before_marker = result.split("\n\n[")[0]
+        # The last character before the marker split should be a complete line
+        assert not before_marker.endswith(" ")  # didn't cut mid-word typically
+
+    def test_zero_target(self):
+        text = "some text"
+        result = _truncate_to_tokens(text, 0)
+        assert "truncated" in result
+
+
+class TestContextSection:
+    def test_estimated_tokens(self):
+        sec = ContextSection(name="test", content="a" * 400, priority=5)
+        assert sec.estimated_tokens == 100
+
+    def test_default_priority_and_share(self):
+        sec = ContextSection(name="test", content="hi")
+        assert sec.priority == 5
+        assert sec.max_share == 1.0
+
+
+class TestContextPruner:
+    def test_empty_sections(self):
+        pruner = ContextPruner(budget=1000)
+        result = pruner.prune([])
+        assert result.sections == {}
+        assert result.total_tokens_before == 0
+        assert result.total_tokens_after == 0
+        assert result.pruned_sections == []
+
+    def test_under_budget_no_changes(self):
+        """When total tokens are well under budget, nothing is pruned."""
+        pruner = ContextPruner(budget=10_000)
+        sections = [
+            ContextSection("a", "short text", priority=5),
+            ContextSection("b", "another short text", priority=8),
+        ]
+        result = pruner.prune(sections)
+        assert result.sections["a"] == "short text"
+        assert result.sections["b"] == "another short text"
+        assert result.pruned_sections == []
+        assert result.total_tokens_before == result.total_tokens_after
+
+    def test_over_budget_trims_lowest_priority_first(self):
+        """When over budget, lowest-priority sections are trimmed first."""
+        budget = 100  # Very small budget (100 tokens = ~400 chars)
+        pruner = ContextPruner(budget=budget)
+
+        low_priority_content = "L" * 2000   # ~500 tokens  (way over budget)
+        high_priority_content = "H" * 200    # ~50 tokens
+
+        sections = [
+            ContextSection("low", low_priority_content, priority=1, max_share=1.0),
+            ContextSection("high", high_priority_content, priority=9, max_share=1.0),
+        ]
+        result = pruner.prune(sections)
+
+        # High-priority content should be preserved fully
+        assert result.sections["high"] == high_priority_content
+        # Low-priority content should be trimmed
+        assert len(result.sections["low"]) < len(low_priority_content)
+        assert "low" in result.pruned_sections
+        assert result.total_tokens_after <= budget
+
+    def test_max_share_caps_individual_section(self):
+        """max_share limits how much budget a single section can consume."""
+        budget = 1000
+        pruner = ContextPruner(budget=budget)
+
+        # This section is 2000 tokens but max_share=0.10 → capped to 100 tokens
+        big_content = "x" * 8000  # ~2000 tokens
+        sections = [
+            ContextSection("big", big_content, priority=5, max_share=0.10),
+            ContextSection("small", "tiny", priority=8, max_share=0.90),
+        ]
+        result = pruner.prune(sections)
+
+        # "big" should have been capped
+        assert "big" in result.pruned_sections
+        big_tokens = estimate_tokens(result.sections["big"])
+        assert big_tokens <= int(budget * 0.10) + 5  # small tolerance for rounding
+
+    def test_prune_result_metadata(self):
+        """PruneResult correctly tracks before/after totals and budget."""
+        pruner = ContextPruner(budget=50)
+        sections = [
+            ContextSection("a", "x" * 800, priority=3),  # ~200 tokens
+        ]
+        result = pruner.prune(sections)
+        assert result.budget == 50
+        assert result.total_tokens_before == 200
+        assert result.total_tokens_after <= 50
+        assert "a" in result.pruned_sections
+
+    def test_preserves_min_content(self):
+        """Even extremely tight budgets preserve at least some content."""
+        pruner = ContextPruner(budget=10)
+        sections = [
+            ContextSection("only", "x" * 4000, priority=1),  # ~1000 tokens
+        ]
+        result = pruner.prune(sections)
+        # Should still have some content (at least the truncation marker)
+        assert len(result.sections["only"]) > 0
+

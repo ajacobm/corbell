@@ -32,6 +32,11 @@ from corbell.core.spec.schema import (
     SpecFrontmatter,
     serialize_frontmatter,
 )
+from corbell.core.token_tracker import (
+    ContextPruner,
+    ContextSection,
+    estimate_tokens,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +184,7 @@ class SpecGenerator:
         doc_pattern_store: DocPatternStore,
         llm_client: Optional[LLMClient] = None,
         token_tracker=None,
+        context_budget: int = 100_000,
     ):
         """Initialize the generator.
 
@@ -188,12 +194,16 @@ class SpecGenerator:
             doc_pattern_store: For loading learned design patterns.
             llm_client: Optional LLM client for rich generation.
             token_tracker: Optional :class:`~corbell.core.token_tracker.TokenUsageTracker`.
+            context_budget: Maximum token budget for the LLM input context.
+                Defaults to 100,000.  The pruner will trim lowest-priority
+                sections to stay within this limit.
         """
         self.graph = graph_store
         self.embeddings = embedding_store
         self.patterns = doc_pattern_store
         self.llm = llm_client
         self.token_tracker = token_tracker
+        self._context_budget = context_budget
 
     def generate(
         self,
@@ -403,13 +413,44 @@ class SpecGenerator:
         if full_graph:
             system += full_graph_instructions
 
-        code_chunks_count = code_context.count("### ")
+        # --- Smart Context Pruning ---
+        # Instead of blindly slicing with [:8000], use the ContextPruner to
+        # intelligently fit all sections within the token budget.  Higher
+        # priority sections (PRD, code) are preserved; lower priority
+        # sections (patterns) are trimmed first.
+        system_tokens = estimate_tokens(system)
+        output_reserve = 8_000  # tokens reserved for LLM output
+        user_budget = max(self._context_budget - system_tokens - output_reserve, 10_000)
+
+        pruner = ContextPruner(budget=user_budget)
+        result = pruner.prune([
+            ContextSection("prd", prd, priority=9, max_share=0.15),
+            ContextSection("code_context", code_context, priority=8, max_share=0.40),
+            ContextSection("graph_context", graph_context, priority=7, max_share=0.15),
+            ContextSection("file_list", file_list, priority=6, max_share=0.10),
+            ContextSection("patterns_context", patterns_context, priority=5, max_share=0.15),
+        ])
+
+        if result.pruned_sections:
+            print(
+                f"   ✂️  Context pruned to fit token budget "
+                f"({result.total_tokens_before:,} → {result.total_tokens_after:,} tokens). "
+                f"Trimmed: {', '.join(result.pruned_sections)}"
+            )
+
+        p_prd = result.sections["prd"]
+        p_code = result.sections["code_context"]
+        p_graph = result.sections["graph_context"]
+        p_patterns = result.sections["patterns_context"]
+        p_files = result.sections["file_list"]
+
+        code_chunks_count = p_code.count("### ")
         user = _USER_PROMPT_TEMPLATE.format(
-            prd=prd[:6000],
-            code_context=code_context[:8000],
-            graph_context=graph_context[:2000],
-            patterns_context=patterns_context[:3000],
-            file_list=file_list,
+            prd=p_prd,
+            code_context=p_code,
+            graph_context=p_graph,
+            patterns_context=p_patterns,
+            file_list=p_files,
             code_chunks_count=code_chunks_count,
         )
 
@@ -643,6 +684,7 @@ class SpecGenerator:
             from corbell.core.embeddings.model import SentenceTransformerModel
             from corbell.core.prd_processor import PRDProcessor
             from rich.console import Console
+            from rich.markup import escape
             console = Console()
 
             proc = PRDProcessor(llm_client=self.llm)
@@ -652,7 +694,7 @@ class SpecGenerator:
             
             console.print(f"\n[bold cyan]1. LLM Semantic Search Queries[/bold cyan] (generated from PRD):")
             for q in queries:
-                console.print(f"  [dim]→[/dim] {q}")
+                console.print(f"  [dim]→[/dim] {escape(q)}")
 
             # Step 2: Extract keywords and query Graph store for relevant Method names
             keywords = proc.extract_keywords(prd)
@@ -727,7 +769,7 @@ class SpecGenerator:
                     
                     if attempt == 0:
                         # Log every original query hit to ensure transparency
-                        console.print(f"  [dim]Query {i+1} hits: {len(hits)} raw chunks retrieved[/dim] - [dim italic]'{current_q}'[/dim]")
+                        console.print(f"  [dim]Query {i+1} hits: {len(hits)} raw chunks retrieved[/dim] - [dim]'{escape(current_q)}'[/dim]")
 
                     # Partition into code vs .md
                     for r in hits:
@@ -771,11 +813,14 @@ class SpecGenerator:
             final_chunks = deduped[:max_chunks]
             console.print(f"\n[bold green]✓ Embeddings search complete: Selected {len(final_chunks)} exact code chunks for LLM context[/bold green]")
             for c in final_chunks:
-                console.print(f"  [dim]- {c.file_path} (lines {c.start_line}-{c.end_line}) {':: ' + c.symbol if c.symbol else ''}[/dim]")
+                safe_symbol = escape(c.symbol) if c.symbol else ''
+                console.print(f"  [dim]- {escape(c.file_path)} (lines {c.start_line}-{c.end_line}) {':: ' + safe_symbol if safe_symbol else ''}[/dim]")
                 
             return final_chunks
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             print(f"⚠️  Code chunk query failed: {e}")
             return []
 

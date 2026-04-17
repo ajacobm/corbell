@@ -147,6 +147,7 @@ llm:
   provider: anthropic   # or: openai, ollama, aws, azure, gcp
   model: claude-sonnet-4-5-20250929
   api_key: ${ANTHROPIC_API_KEY}
+  context_budget: 100000  # Token limit for prompt context
 
 integrations:
   jira:

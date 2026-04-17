@@ -125,6 +125,8 @@ class LLMConfig(BaseModel):
     model: str = "claude-sonnet-4-5-20250929"
     api_key: Optional[str] = None
 
+    context_budget: int = 100_000
+
     # AWS Bedrock
     aws_region: Optional[str] = None
 
@@ -436,6 +438,7 @@ llm:
   provider: anthropic
   model: claude-sonnet-4-5
   api_key: ${ANTHROPIC_API_KEY}
+  context_budget: 100000
 
   # ---- Option 2: OpenAI ----
   # provider: openai

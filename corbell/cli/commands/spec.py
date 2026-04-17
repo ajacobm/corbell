@@ -87,6 +87,10 @@ def spec_new(
             "bypassing keyword filters for graph lookups."
         ),
     ),
+    context_budget: Optional[int] = typer.Option(
+        None, "--context-budget",
+        help="Maximum token budget for LLM context (overrides workspace.yaml)."
+    ),
 ):
     """Generate a technical design document.
 
@@ -135,7 +139,9 @@ def spec_new(
     emb_store = SQLiteEmbeddingStore(db_path)
     doc_store = DocPatternStore(config_dir / ".corbell" / "doc_patterns.json")
 
-    gen = SpecGenerator(graph_store, emb_store, doc_store, llm_client=llm, token_tracker=tracker)
+    # Use CLI arg if provided, otherwise fallback to workspace.yaml (which defaults to 100_000)
+    final_budget = context_budget if context_budget is not None else cfg.llm.context_budget
+    gen = SpecGenerator(graph_store, emb_store, doc_store, llm_client=llm, token_tracker=tracker, context_budget=final_budget)
 
     # --- Existing codebase mode ---
     if existing:
