@@ -5,6 +5,7 @@
   <p>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"/></a>
     <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"/></a>
+    <a href="https://agentseal.org/mcp/corbell"><img src="https://agentseal.org/api/v1/mcp/corbell/badge" alt="AgentSeal MCP"/></a>
   </p>
 </div>
 
